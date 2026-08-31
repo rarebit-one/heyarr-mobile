@@ -18,6 +18,9 @@ object WorksJson {
 
     private val TITLE_KEYS = listOf("title", "name", "sort_title")
     private val KIND_KEYS = listOf("kind", "type", "media_type")
+    // Playback handles, tolerantly read when a browse row inlines a primary asset.
+    private val HASH_KEYS = listOf("blob_hash", "content_hash", "hash")
+    private val MIME_KEYS = listOf("mime", "mime_type", "content_type")
 
     /** Parse a works-list response body into [Work]s, skipping any element missing an id. */
     fun parse(body: String): List<Work> {
@@ -25,7 +28,13 @@ object WorksJson {
         return splitObjects(array).mapNotNull { obj ->
             val id = firstString(obj, listOf("id")) ?: return@mapNotNull null
             val title = firstString(obj, TITLE_KEYS) ?: id
-            Work(id = id, title = title, kind = firstString(obj, KIND_KEYS))
+            Work(
+                id = id,
+                title = title,
+                kind = firstString(obj, KIND_KEYS),
+                blobHash = firstString(obj, HASH_KEYS),
+                mime = firstString(obj, MIME_KEYS),
+            )
         }
     }
 

@@ -71,7 +71,8 @@ app/src/main/java/one/rarebit/heyarr/mobile/
   auth/         Credential (Device/Session) + DeviceCredential (~-join header, Prover seam)
   login/        Voidbind QR-login seam (tuple, mini-json, VoidbindLogin, QrLoginClient, screen)
   library/      LibraryClient (native /api/v1/works) + WorksJson + SubsonicClient stub + screen
-  playback/     PlaybackClient — /blobs/{hash}/content range + /playback seam (structure only)
+  playback/     PlaybackClient (blob-stream target + /playback/plan) + Media3 player
+                (HeyarrDataSource auth+Range data source, PlayerScreen, PlaybackTarget/Json)
   personalstate/ PersonalStateClient (opaque spaces sync) + Unwrapper (decrypt-on-device seam)
   net/          HttpTransport interface + OkHttp actual
 app/src/test/…  pure-JVM unit tests (no Android runtime)
@@ -91,8 +92,10 @@ git-ignored; CI provisions the SDK.
 
 ## What's phone-gated (deferred, can't be CI-proven)
 
-Real media playback (Media3/ExoPlayer against `/blobs/.../content` + `/playback` negotiation),
-on-device personal-state **decrypt** (Keystore/StrongBox X25519 unwrap + AEAD) and the local
+On-device playback **acceptance** — the Media3/ExoPlayer player against `/blobs/.../content`
+now ships (`playback/`), but a real codec decoding and a scrub's live 206 range reads only
+prove out on a device; the `/playback` negotiation (`PlaybackClient.plan`) is wired but keyed
+on an enrolled `device_id` — on-device personal-state **decrypt** (Keystore/StrongBox X25519 unwrap + AEAD) and the local
 Personal MCP, **device-cert login** (in-enclave Ed25519 possession proof + enrolment), QR
 **bitmap** rendering, and choosing whether to ship the Subsonic reach. See the README's
 follow-ups. **Keep CI green** — unit tests + `assembleDebug` are the bar; anything needing a
