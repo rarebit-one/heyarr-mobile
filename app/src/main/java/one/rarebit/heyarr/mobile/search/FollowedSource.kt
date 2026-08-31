@@ -2,15 +2,20 @@ package one.rarebit.heyarr.mobile.search
 
 /**
  * A source the user is subscribed to — one row of the "Following" list. Models the
- * `FollowedSource` / `list_followed` shape from the *Followed Sources / The Archive*
- * plan (M12): a subscription that projects new `DesiredItem`s over time. A thin
- * projection — id, a display title, its type, and the archive's running counters
- * ([itemsKnown] enumerated, [itemsArchived] captured) plus [health] — of a richer
- * server row; the screen's job is to show what you're following, not model policy.
+ * live `FollowedSourceView` (`GET /api/v1/followed-sources`, heyarr-core
+ * `internal/api/resources/followed.go`): a subscription that projects new
+ * `DesiredItem`s over time. A thin projection — its [id], the [workId] it follows,
+ * its inferred [type], and the archive's running counters ([itemsKnown] enumerated,
+ * [itemsArchived] captured) plus [health] (`healthy`/`unhealthy`/`unknown`).
+ *
+ * The server view carries no human title (only a `work_id`), so [title] falls back to
+ * the work id for display until a work→title lookup is wired; that is what the
+ * Following screen shows.
  */
 data class FollowedSource(
     val id: String,
     val title: String,
+    val workId: String? = null,
     val type: String? = null,
     val itemsKnown: Int? = null,
     val itemsArchived: Int? = null,
@@ -18,23 +23,25 @@ data class FollowedSource(
 )
 
 /**
- * Parser for the `list_followed` response body — same tolerant, dependency-free
- * scanning as [SearchResultsJson] (whose primitives it borrows via a bare-array/
- * envelope reader). SEAM: the exact field names track the plan §7 (`list_followed`
- * returns each source + last-poll, items known, items archived, health); verify when
- * heyarr-core's REST route lands.
+ * Parser for the `GET /api/v1/followed-sources` body (`{ "followed_sources": [ … ] }`)
+ * — same tolerant, dependency-free scanning as [SearchResultsJson] (no `org.json`,
+ * which is stubbed in unit tests). Reads each `FollowedSourceView`'s `id`, `work_id`,
+ * `type`, `items_known`, `items_archived`, and `health`. A bare top-level array is
+ * also tolerated.
  */
 object FollowedSourcesJson {
 
     fun parse(body: String): List<FollowedSource> {
         // Scanned directly from each object so this reader owns its own envelope keys
-        // (`followed`/`sources`), independent of SearchResultsJson's (`works`/`items`).
+        // (`followed_sources`/`followed`/`sources`), independent of SearchResultsJson's.
         return objectsOf(body).mapNotNull { obj ->
             val id = stringField(obj, listOf("id", "source_id")) ?: return@mapNotNull null
+            val workId = stringField(obj, listOf("work_id"))
             FollowedSource(
                 id = id,
-                title = stringField(obj, listOf("title", "name", "sort_title")) ?: id,
-                type = stringField(obj, listOf("content_type", "source_type", "type", "kind")),
+                title = stringField(obj, listOf("title", "name", "sort_title")) ?: workId ?: id,
+                workId = workId,
+                type = stringField(obj, listOf("type", "content_type", "source_type", "kind")),
                 itemsKnown = intField(obj, listOf("items_known", "known")),
                 itemsArchived = intField(obj, listOf("items_archived", "archived")),
                 health = stringField(obj, listOf("health", "status")),
@@ -46,7 +53,7 @@ object FollowedSourcesJson {
         val trimmed = body.trim()
         val arr = when {
             trimmed.startsWith("[") -> trimmed
-            else -> listOf("items", "followed", "sources", "data")
+            else -> listOf("followed_sources", "items", "followed", "sources", "data")
                 .firstNotNullOfOrNull { key ->
                     val at = trimmed.indexOf("\"$key\"")
                     if (at < 0) return@firstNotNullOfOrNull null
