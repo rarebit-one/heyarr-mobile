@@ -1,7 +1,9 @@
 package one.rarebit.heyarr.mobile.library
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,12 +22,17 @@ sealed interface LibraryUiState {
 }
 
 /**
- * The library browse list — heyarr's native `/api/v1/works` rendered as rows. This
- * is the "browse list wired to the contract" the scaffold demonstrates; tapping a row
- * into detail + playback is a follow-up (see playback/).
+ * The library browse list — heyarr's native `/api/v1/works` rendered as rows. Tapping
+ * a row hands the work to [onPlay], which streams it in the M10 player (a directly
+ * streamable row shows a "Tap to play" affordance; one whose asset must be negotiated
+ * says so rather than silently doing nothing).
  */
 @Composable
-fun LibraryScreen(state: LibraryUiState, modifier: Modifier = Modifier) {
+fun LibraryScreen(
+    state: LibraryUiState,
+    onPlay: (Work) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         Text("Library", style = MaterialTheme.typography.headlineSmall)
         when (state) {
@@ -43,10 +50,22 @@ fun LibraryScreen(state: LibraryUiState, modifier: Modifier = Modifier) {
                 } else {
                     LazyColumn(modifier = Modifier.padding(top = 12.dp)) {
                         items(state.works) { work ->
-                            Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onPlay(work) }
+                                    .padding(vertical = 8.dp),
+                            ) {
                                 Text(work.title, style = MaterialTheme.typography.bodyLarge)
-                                work.kind?.let {
-                                    Text(it, style = MaterialTheme.typography.bodySmall)
+                                val subtitle = buildString {
+                                    work.kind?.let { append(it) }
+                                    if (work.isPlayable) {
+                                        if (isNotEmpty()) append(" · ")
+                                        append("Tap to play")
+                                    }
+                                }
+                                if (subtitle.isNotEmpty()) {
+                                    Text(subtitle, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                             HorizontalDivider()

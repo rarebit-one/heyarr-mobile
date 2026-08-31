@@ -55,4 +55,20 @@ class WorksJsonTest {
     @Test fun emptyOnNonArray() {
         assertEquals(0, WorksJson.parse("""{"error":"nope"}""").size)
     }
+
+    @Test fun parsesOptionalPlaybackHandles() {
+        val body = """
+            [
+              {"id":"w1","title":"Dune","media_type":"movie","blob_hash":"deadbeef","mime":"video/mp4"},
+              {"id":"w2","title":"No Asset"}
+            ]
+        """.trimIndent()
+        val works = WorksJson.parse(body)
+        assertEquals("deadbeef", works[0].blobHash)
+        assertEquals("video/mp4", works[0].mime)
+        assertEquals(true, works[0].isPlayable)
+        // A row without a hash is not directly playable.
+        assertEquals(null, works[1].blobHash)
+        assertEquals(false, works[1].isPlayable)
+    }
 }

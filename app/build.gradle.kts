@@ -59,6 +59,16 @@ dependencies {
     // HTTP for the login seam, library browse, blob-stream and personal-state fetches.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // ── Media3 / ExoPlayer (M10 playback) ───────────────────────────────────────
+    // The player itself, the PlayerView (transport controls) and the OkHttp-backed
+    // HTTP data source. ExoPlayer's HTTP data source issues Range requests and
+    // handles 206 partial content natively; we point it at the authenticated blob
+    // endpoint and inject the Authorization header as a default request property.
+    val media3 = "1.4.1"
+    implementation("androidx.media3:media3-exoplayer:$media3")
+    implementation("androidx.media3:media3-ui:$media3")
+    implementation("androidx.media3:media3-datasource-okhttp:$media3")
+
     // ── Unit tests (pure JVM — no Android runtime) ──────────────────────────────
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

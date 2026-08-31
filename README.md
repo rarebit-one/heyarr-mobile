@@ -14,7 +14,7 @@ This is a **scaffold** — a buildable, tested foundation, not a finished app.
 | **Auth** | Two credential shapes — primary `Authorization: Device <cert>~<proof>` and bootstrap `Bearer` (QR session). Header formatting real + tested; the in-enclave proof is phone-gated. | `auth/` |
 | **Login** | Voidbind **QR** seam (heyarr's channel). Real initiator `POST /login` + poll `GET /login/{id}` → Bearer token. QR bitmap render + device-side approve are follow-ups. | `login/` |
 | **Library** | `LibraryClient` against the native `GET /api/v1/works`, auth header + tolerant parse, wired to a browse list. Subsonic reach is a documented stub. | `library/` |
-| **Playback** | `/api/v1/blobs/{hash}/content` range URL + HEAD probe and the `/api/v1/playback` endpoint — structure + range handling; real Media3 playback is a follow-up. | `playback/` |
+| **Playback** | A **Media3/ExoPlayer** player streaming `/api/v1/blobs/{hash}/content` over an OkHttp-backed data source with the auth header + native **Range/206** seek (the M10 win); transport controls for audio **and** video; wired to tap-an-item-to-play. The URL/plan/target logic is unit-tested; a real codec decoding on a device is the phone-gated half. | `playback/` |
 | **Personal state** | `/api/v1/spaces/{id}/{keys,changes,snapshot}` fetched as **opaque ciphertext**; a fail-closed `Unwrapper` decrypt-on-device seam. **No crypto in this repo.** | `personalstate/` |
 
 ## Relationship to the other repos
@@ -51,8 +51,11 @@ Requires JDK 17+ and an Android SDK (API 35). Point `local.properties` at your S
 
 These need real hardware / a live server and can't be proven in CI:
 
-- **Real playback** — a Media3/ExoPlayer pipeline over `/api/v1/blobs/{hash}/content` (Range +
-  `Authorization`) and the `POST /api/v1/playback` transcode/remux negotiation, on a real codec.
+- **On-device playback acceptance** — the Media3/ExoPlayer pipeline over
+  `/api/v1/blobs/{hash}/content` (Range + `Authorization`) now **ships** (`playback/`), but a
+  real codec decoding the stream and a scrub issuing live 206 range reads can only be proven on
+  a device/emulator. The `POST /api/v1/playback` transcode/remux negotiation is wired
+  (`PlaybackClient.plan`) but keyed on an enrolled `device_id`, so it goes live with device auth.
 - **Device-cert login** — the in-enclave Ed25519 **possession proof** (Keystore/StrongBox,
   non-exportable key) + the enrolment handshake that turns a QR-bootstrapped session into an
   enrolled `Device` credential; re-mint-on-wake for a slept, clock-drifted device (ADR-0048).
