@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A Compose app only needs a no-action-bar Material base theme. -->
+    <style name="Theme.Heyarr" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
