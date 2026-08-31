@@ -1,0 +1,103 @@
+package one.rarebit.heyarr.mobile.search
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import one.rarebit.heyarr.mobile.HeyarrConfig
+import one.rarebit.heyarr.mobile.auth.Credential
+import one.rarebit.heyarr.mobile.net.OkHttpTransport
+
+/**
+ * Drives the Search + Subscribe/One-off screens. Search runs against the live
+ * `GET /api/v1/works?q=` route ([SearchClient]); **Get once** against the live
+ * `POST /api/v1/desired` (`monitor:false`) and **Follow** against the `follow_source`
+ * seam ([AcquireClient]); the Following list against the `list_followed` seam
+ * ([FollowingClient]).
+ *
+ * Blocking transport calls run on [Dispatchers.IO]; the UI observes the flows. The
+ * arithmetic-free, network-free state transitions live in [SearchUiState]/[AcquireState]
+ * so they are the parts under unit test.
+ */
+class SearchViewModel(
+    private val config: HeyarrConfig,
+    private val credential: Credential,
+) : ViewModel() {
+
+    private val transport = OkHttpTransport()
+
+    private val search by lazy { SearchClient(transport, config.baseUrl, credential) }
+    private val acquire by lazy {
+        AcquireClient(transport, config.baseUrl, credential, config.defaultQualityProfile)
+    }
+    private val following by lazy { FollowingClient(transport, config.baseUrl, credential) }
+
+    private val _searchState = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
+    val searchState: StateFlow<SearchUiState> = _searchState.asStateFlow()
+
+    /** Per-result acquire status, keyed by [SearchResult.workId]. */
+    private val _acquireStates = MutableStateFlow<Map<String, AcquireState>>(emptyMap())
+    val acquireStates: StateFlow<Map<String, AcquireState>> = _acquireStates.asStateFlow()
+
+    private val _followingState = MutableStateFlow<FollowingUiState>(FollowingUiState.Idle)
+    val followingState: StateFlow<FollowingUiState> = _followingState.asStateFlow()
+
+    fun onSearch(query: String) {
+        if (query.isBlank()) {
+            _searchState.value = SearchUiState.Idle
+            return
+        }
+        _searchState.value = SearchUiState.Searching(query)
+        _acquireStates.value = emptyMap()
+        viewModelScope.launch {
+            val next = withContext(Dispatchers.IO) {
+                runCatching { SearchUiState.forResults(query, search.search(query)) }
+                    .getOrElse { SearchUiState.Error(it.message ?: "search failed") }
+            }
+            _searchState.value = next
+        }
+    }
+
+    fun onGetOnce(result: SearchResult) = act(result) { acquire.getOnce(result) }
+
+    fun onFollow(result: SearchResult) = act(result) { acquire.follow(result) }
+
+    private fun act(result: SearchResult, call: () -> AcquireClient.Result) {
+        setAcquire(result.workId, AcquireState.InFlight)
+        viewModelScope.launch {
+            val state = withContext(Dispatchers.IO) {
+                runCatching { AcquireState.of(call()) }
+                    .getOrElse { AcquireState.Failed(it.message ?: "action failed") }
+            }
+            setAcquire(result.workId, state)
+        }
+    }
+
+    private fun setAcquire(workId: String, state: AcquireState) {
+        _acquireStates.update { it + (workId to state) }
+    }
+
+    fun loadFollowing() {
+        _followingState.value = FollowingUiState.Loading
+        viewModelScope.launch {
+            val next = withContext(Dispatchers.IO) {
+                runCatching { FollowingUiState.Loaded(following.list()) }
+                    .getOrElse { FollowingUiState.Error(it.message ?: "failed to load following") }
+            }
+            _followingState.value = next
+        }
+    }
+}
+
+/** UI state for the Following list screen. */
+sealed interface FollowingUiState {
+    data object Idle : FollowingUiState
+    data object Loading : FollowingUiState
+    data class Loaded(val sources: List<FollowedSource>) : FollowingUiState
+    data class Error(val message: String) : FollowingUiState
+}

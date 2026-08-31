@@ -39,6 +39,13 @@ class AppViewModel(
 
     private var credential: Credential? = null
 
+    /**
+     * The credential established by QR login (a Bearer session, later a device cert),
+     * or null before sign-in. Exposed so the search/acquire/following features can be
+     * driven with the same authenticated identity that browses the library.
+     */
+    fun credentialOrNull(): Credential? = credential
+
     fun signIn() {
         if (_loginState.value is LoginUiState.AwaitingScan) return
         viewModelScope.launch {
