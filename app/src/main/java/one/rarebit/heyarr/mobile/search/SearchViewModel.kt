@@ -14,15 +14,21 @@ import one.rarebit.heyarr.mobile.auth.Credential
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
 
 /**
- * Drives the Search + Subscribe/One-off screens. Search runs against the live
- * `GET /api/v1/works?q=` route ([SearchClient]); **Get once** against the live
- * `POST /api/v1/desired` (`monitor:false`) and **Follow** against the `follow_source`
- * seam ([AcquireClient]); the Following list against the `list_followed` seam
+ * Drives the Search + Subscribe/One-off + Following screens against heyarr's **live**
+ * M12 routes: search on `POST /api/v1/search` ([SearchClient]); **Get once** on
+ * `POST /api/v1/desired` (`monitor:false`) and **Follow** on
+ * `POST /api/v1/followed-sources` ([AcquireClient]); the Following list on
+ * `GET /api/v1/followed-sources` and unfollow on `DELETE /api/v1/followed-sources/{id}`
  * ([FollowingClient]).
  *
  * Blocking transport calls run on [Dispatchers.IO]; the UI observes the flows. The
  * arithmetic-free, network-free state transitions live in [SearchUiState]/[AcquireState]
  * so they are the parts under unit test.
+ *
+ * **Scope reality:** a QR/web-login **session** is minted *read-scoped*, so Search and
+ * the Following list work, while Get-once / Follow / Unfollow (write routes) `403`
+ * until the device enrols a write-scoped cert. Those 403s are surfaced as honest
+ * "enrol this device" states by the clients, not swallowed or faked.
  */
 class SearchViewModel(
     private val config: HeyarrConfig,
@@ -46,6 +52,10 @@ class SearchViewModel(
 
     private val _followingState = MutableStateFlow<FollowingUiState>(FollowingUiState.Idle)
     val followingState: StateFlow<FollowingUiState> = _followingState.asStateFlow()
+
+    /** Per-source unfollow error message (a Phase-1 refusal, or a transport failure), keyed by id. */
+    private val _unfollowErrors = MutableStateFlow<Map<String, String>>(emptyMap())
+    val unfollowErrors: StateFlow<Map<String, String>> = _unfollowErrors.asStateFlow()
 
     fun onSearch(query: String) {
         if (query.isBlank()) {
@@ -84,12 +94,34 @@ class SearchViewModel(
 
     fun loadFollowing() {
         _followingState.value = FollowingUiState.Loading
+        _unfollowErrors.value = emptyMap()
         viewModelScope.launch {
             val next = withContext(Dispatchers.IO) {
                 runCatching { FollowingUiState.Loaded(following.list()) }
                     .getOrElse { FollowingUiState.Error(it.message ?: "failed to load following") }
             }
             _followingState.value = next
+        }
+    }
+
+    /**
+     * Unfollow [source] (keeping its archive — Phase-1 default). On success the list
+     * reloads; a refusal or failure lands as a per-row message in [unfollowErrors].
+     */
+    fun onUnfollow(source: FollowedSource) {
+        _unfollowErrors.update { it - source.id }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { following.unfollow(source.id) }
+                    .getOrElse { FollowingClient.UnfollowResult.Failed(0, it.message ?: "unfollow failed") }
+            }
+            when (result) {
+                is FollowingClient.UnfollowResult.Removed -> loadFollowing()
+                is FollowingClient.UnfollowResult.Refused ->
+                    _unfollowErrors.update { it + (source.id to result.message) }
+                is FollowingClient.UnfollowResult.Failed ->
+                    _unfollowErrors.update { it + (source.id to result.message) }
+            }
         }
     }
 }

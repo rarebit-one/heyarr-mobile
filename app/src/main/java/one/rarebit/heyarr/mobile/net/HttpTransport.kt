@@ -20,4 +20,13 @@ data class HttpResponse(val status: Int, val body: String)
 interface HttpTransport {
     fun get(url: String, headers: Map<String, String> = emptyMap()): HttpResponse
     fun post(url: String, body: String? = null, contentType: String? = null, headers: Map<String, String> = emptyMap()): HttpResponse
+
+    /**
+     * DELETE — needed by the followed-sources unfollow route
+     * (`DELETE /api/v1/followed-sources/{id}?keep_archive=…`). Defaulted to a `405`
+     * so the many existing test fakes (and any transport that never deletes) keep
+     * compiling; the OkHttp actual and any fake exercising unfollow override it.
+     */
+    fun delete(url: String, headers: Map<String, String> = emptyMap()): HttpResponse =
+        HttpResponse(405, "")
 }

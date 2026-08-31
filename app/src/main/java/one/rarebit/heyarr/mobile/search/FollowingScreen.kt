@@ -1,28 +1,36 @@
 package one.rarebit.heyarr.mobile.search
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /**
  * The **Following** list — every source the user is subscribed to (an ongoing
- * `follow_source`), with its archive counters. SEAM: wired to the `list_followed`
- * route via [FollowingClient]; until that REST route lands it will surface the
- * server's status (e.g. an empty list, or an error if the route is not up yet).
+ * `follow_source`), with its archive counters. Wired to the live
+ * `GET /api/v1/followed-sources` list and `DELETE /api/v1/followed-sources/{id}`
+ * unfollow via [FollowingClient]. A per-row Unfollow keeps the archive (Phase-1
+ * default); a refusal or failure shows inline beneath that row.
  */
 @Composable
 fun FollowingScreen(
     state: FollowingUiState,
+    unfollowErrors: Map<String, String>,
     onLoad: () -> Unit,
+    onUnfollow: (FollowedSource) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LaunchedEffect(Unit) { onLoad() }
@@ -48,23 +56,51 @@ fun FollowingScreen(
                 } else {
                     LazyColumn(modifier = Modifier.padding(top = 12.dp)) {
                         items(state.sources) { source ->
-                            Column(modifier = Modifier.padding(vertical = 10.dp)) {
-                                Text(source.title, style = MaterialTheme.typography.bodyLarge)
-                                val meta = buildList {
-                                    source.type?.let { add(it) }
-                                    if (source.itemsArchived != null || source.itemsKnown != null) {
-                                        add("${source.itemsArchived ?: 0}/${source.itemsKnown ?: 0} archived")
-                                    }
-                                    source.health?.let { add(it) }
-                                }.joinToString(" · ")
-                                if (meta.isNotEmpty()) {
-                                    Text(meta, style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
+                            FollowedRow(
+                                source = source,
+                                error = unfollowErrors[source.id],
+                                onUnfollow = { onUnfollow(source) },
+                            )
                             HorizontalDivider()
                         }
                     }
                 }
         }
+    }
+}
+
+@Composable
+private fun FollowedRow(
+    source: FollowedSource,
+    error: String?,
+    onUnfollow: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            Text(source.title, style = MaterialTheme.typography.bodyLarge)
+            val meta = buildList {
+                source.type?.let { add(it) }
+                if (source.itemsArchived != null || source.itemsKnown != null) {
+                    add("${source.itemsArchived ?: 0}/${source.itemsKnown ?: 0} archived")
+                }
+                source.health?.let { add(it) }
+            }.joinToString(" · ")
+            if (meta.isNotEmpty()) {
+                Text(meta, style = MaterialTheme.typography.bodySmall)
+            }
+            if (error != null) {
+                Text(
+                    error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+        OutlinedButton(onClick = onUnfollow) { Text("Unfollow") }
     }
 }

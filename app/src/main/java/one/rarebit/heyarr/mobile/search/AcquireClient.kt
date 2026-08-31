@@ -2,6 +2,7 @@ package one.rarebit.heyarr.mobile.search
 
 import one.rarebit.heyarr.mobile.auth.Credential
 import one.rarebit.heyarr.mobile.net.HttpTransport
+import one.rarebit.heyarr.mobile.net.ProblemDetail
 
 /**
  * The two acquisition intents behind a search result, and where each one goes on the
@@ -15,12 +16,19 @@ import one.rarebit.heyarr.mobile.net.HttpTransport
  *   one-off is the deliberate opt-out).
  *
  * - **[follow]** — an **ongoing subscription**: "follow this source and keep
- *   archiving whatever it emits" (a series' new episodes, a podcast's new entries, a
- *   channel's new videos). Wire target is the `follow_source` contract from the
- *   *Followed Sources / The Archive* plan (M12), which is **being built now** and has
- *   **no REST route yet** — so [follow] is a documented **SEAM** (like the login
- *   `VoidbindLogin` seam): it POSTs the expected body to the expected route and
- *   TODO-marks the swap. See [followedUrl] / [followBody].
+ *   archiving whatever it emits." Wire target is now **live** (M12 Slice 5):
+ *   `POST /api/v1/followed-sources` with a `FollowSourceRequest` body ⇒ `201`
+ *   `FollowedSource` (+ `Location`) — heyarr-core `internal/api/resources/followed.go`
+ *   `FollowSource`/`createFollowedSource`.
+ *
+ *   **Phase-1 reality:** a followed source needs a *feed identity* the server can
+ *   poll — a `tvdb_id` or a TVDB `url` — and only `tv_series` is implemented; anything
+ *   else (or a work with no feed identity) is **refused server-side** with a `400`
+ *   whose `detail` explains why. A search result carries a `work_id` but no feed
+ *   identity, so a bare follow of a search hit is refused today. Per the brief we do
+ *   **not pre-filter** — we send the intent and surface the server's `detail` as a
+ *   user-visible [Result.Failed], and accept an optional [tvdbId]/[url] so a caller
+ *   that has one can follow for real.
  *
  * The distinction is the whole feature: a one-off is a single `DesiredItem`; a follow
  * is a `FollowedSource` that *projects* new `DesiredItem`s forever.
@@ -58,46 +66,67 @@ class AcquireClient(
             contentType = "application/json",
             headers = jsonHeaders,
         )
-        return if (resp.status == 201 || resp.status == 200) {
-            Result.Wanted(desiredId = idFromBody(resp.body))
-        } else {
-            Result.Failed(resp.status, "want failed: HTTP ${resp.status}")
+        return when {
+            resp.status == 201 || resp.status == 200 -> Result.Wanted(desiredId = idFromBody(resp.body))
+            resp.status == 403 -> Result.Failed(403, READ_ONLY_GET_HINT)
+            else -> Result.Failed(resp.status, ProblemDetail.message(resp.body, resp.status, "want"))
         }
     }
 
     /**
-     * **Follow / Subscribe** — an ongoing follow against the `follow_source` contract.
+     * **Follow / Subscribe** — an ongoing follow against the **live**
+     * `POST /api/v1/followed-sources` route. Returns [Result.Following] on `201`
+     * (or `200`). On any other status the server's problem-`detail` is surfaced as
+     * [Result.Failed] — which is how the Phase-1 refusals (needs a feed identity /
+     * `tv_series` only) reach the user as a message rather than a crash.
      *
-     * SEAM: heyarr-core's REST `follow_source` route is landing with M12; until it
-     * does, this POSTs the plan's documented body shape to the expected
-     * `POST /api/v1/followed` route. When the route lands, verify the field names +
-     * path against `internal/api/resources` and the `follow_source` MCP tool, then
-     * delete this note. A `404`/`501` here means the route is not up yet — surfaced
-     * as [Result.Failed], not a crash.
+     * [tvdbId]/[url] give the source's feed identity when the caller has one (a search
+     * result does not); without one the follow is refused loudly by the server, which
+     * is the intended, surfaced behaviour.
      */
-    fun follow(result: SearchResult, backfill: String = "from-now", reason: String? = null): Result {
+    fun follow(
+        result: SearchResult,
+        backfill: String = DEFAULT_BACKFILL,
+        reason: String? = null,
+        tvdbId: String? = null,
+        url: String? = null,
+    ): Result {
         val resp = http.post(
             url = followedUrl(baseUrl),
-            body = followBody(result, qualityProfile, backfill, reason),
+            body = followBody(result, qualityProfile, backfill, reason, tvdbId, url),
             contentType = "application/json",
             headers = jsonHeaders,
         )
-        return if (resp.status == 201 || resp.status == 200) {
-            Result.Following(sourceId = idFromBody(resp.body))
-        } else {
-            Result.Failed(resp.status, "follow failed: HTTP ${resp.status}")
+        return when {
+            resp.status == 201 || resp.status == 200 -> Result.Following(sourceId = idFromBody(resp.body))
+            resp.status == 403 -> Result.Failed(403, READ_ONLY_FOLLOW_HINT)
+            else -> Result.Failed(resp.status, ProblemDetail.message(resp.body, resp.status, "follow"))
         }
     }
 
     companion object {
+        /** heyarr's `FollowSourceRequest` default backfill — `from_now` (vs `full`). */
+        const val DEFAULT_BACKFILL = "from_now"
+
+        /**
+         * Both acquire actions are **write** routes. A QR/web-login **session** (and the
+         * device bootstrap credential) is minted **read-scoped** — it authenticates on
+         * `/api/v1` but heyarr's `RequireScope(write)` returns `403` ("this token does
+         * not carry the write scope", heyarr-core `internal/api/http/auth.go`). That is
+         * a *scope* gap, not a token/401 gap: only a write-scoped device-cert enrolment
+         * unlocks Get-once / Follow. So a `403` is surfaced as an honest, actionable
+         * message rather than a raw scope string or a faked success.
+         */
+        const val READ_ONLY_GET_HINT =
+            "This is a read-only session — enrol this device to get content."
+        const val READ_ONLY_FOLLOW_HINT =
+            "This is a read-only session — enrol this device to follow."
+
         /** `POST /api/v1/desired` — the live want route (`want_content`). */
         fun desiredUrl(baseUrl: String): String = baseUrl.trimEnd('/') + "/api/v1/desired"
 
-        /**
-         * `POST /api/v1/followed` — the EXPECTED `follow_source` route (SEAM, M12).
-         * Track this against heyarr-core when the REST layer lands.
-         */
-        fun followedUrl(baseUrl: String): String = baseUrl.trimEnd('/') + "/api/v1/followed"
+        /** `POST /api/v1/followed-sources` — the live `follow_source` route (M12 Slice 5). */
+        fun followedUrl(baseUrl: String): String = baseUrl.trimEnd('/') + "/api/v1/followed-sources"
 
         /**
          * The one-off want body — heyarr's `WantContentRequest` shape (real):
@@ -115,21 +144,28 @@ class AcquireClient(
         }
 
         /**
-         * The follow body — the `follow_source` contract (SEAM): a source identified by
-         * `source_id` (the work id from search) + `source_type` (its `content_type`), a
-         * `quality_profile`, `monitor:true` (following is inherently monitored), and a
-         * `backfill` policy. Field names track the plan §7; verify when the REST route
-         * lands.
+         * The follow body — heyarr's `FollowSourceRequest` shape (live): the series is
+         * named by `work_id` (from search), the profile by name (`quality_profile`),
+         * `monitor:true` (following is inherently monitored), and a `backfill` policy
+         * (`from_now`/`full`). An optional feed identity — `tvdb_id` or a TVDB `url` —
+         * is included when the caller has one (Phase 1 needs it to actually poll).
+         *
+         * Note the server refuses naming the series by *both* `work_id` and `title`, so
+         * only `work_id` is sent here; and `content_type` is never a request field for a
+         * followed source (it is always `series` in Phase 1, inferred server-side).
          */
         fun followBody(
             result: SearchResult,
             qualityProfile: String,
-            backfill: String = "from-now",
+            backfill: String = DEFAULT_BACKFILL,
             reason: String? = null,
+            tvdbId: String? = null,
+            url: String? = null,
         ): String {
             val fields = buildList {
-                add("\"source_id\":" + jsonString(result.workId))
-                result.type?.let { add("\"source_type\":" + jsonString(it)) }
+                add("\"work_id\":" + jsonString(result.workId))
+                if (!tvdbId.isNullOrBlank()) add("\"tvdb_id\":" + jsonString(tvdbId))
+                if (!url.isNullOrBlank()) add("\"url\":" + jsonString(url))
                 add("\"quality_profile\":" + jsonString(qualityProfile))
                 add("\"monitor\":true")
                 add("\"backfill\":" + jsonString(backfill))

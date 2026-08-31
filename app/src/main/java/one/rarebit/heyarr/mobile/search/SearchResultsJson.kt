@@ -1,20 +1,20 @@
 package one.rarebit.heyarr.mobile.search
 
 /**
- * Dependency-free parser for heyarr's `GET /api/v1/works?q=<term>` list body — the
- * REST route that backs the MCP `search_content` verb (both LIKE-match `sort_title`
- * and filter on `content_type`; see heyarr-core `internal/api/resources/content.go`
- * `listWorks` and `internal/api/mcp/reads.go` `searchContent`).
+ * Dependency-free parser for heyarr's `POST /api/v1/search` response body
+ * (`{ "works": [ { work_id, content_type, title, year? } ] }`, heyarr-core
+ * `internal/api/resources/search.go` `SearchContent`; LIKE-matches `sort_title`,
+ * filters on `content_type`).
  *
  * Kept JVM-testable (no `org.json`, which is stubbed in unit tests) for the same
  * reason as [one.rarebit.heyarr.mobile.library.WorksJson], whose scanning primitives
  * this mirrors. It tolerates a bare top-level array or an object wrapping one under
- * `items` / `works` / `data`, and per element extracts an `id`, a display title
- * (`title` → `name` → `sort_title`), an optional `content_type` (→ `type` /
- * `media_type` / `kind`), an optional numeric `year`, and an optional poster URL
- * (`poster_url` / `poster`).
+ * `items` / `works` / `data`, and per element extracts a `work_id` (or `id`), a
+ * display title (`title` → `name` → `sort_title`), an optional `content_type` (→
+ * `type` / `media_type` / `kind`), an optional numeric `year`, and an optional
+ * poster URL (`poster_url` / `poster`).
  *
- * Poster URLs are not in heyarr's `works` resource today (they would come from a
+ * Poster URLs are not in heyarr's search result today (they would come from a
  * metadata provider, §M3-deferred), so [SearchResult.posterUrl] is parsed
  * tolerantly and is usually null. When a generated client lands (kotlinx.serialization
  * against the published OpenAPI), swap this for it.
