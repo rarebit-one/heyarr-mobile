@@ -42,6 +42,7 @@ class SearchViewModel(
         AcquireClient(transport, config.baseUrl, credential, config.defaultQualityProfile)
     }
     private val following by lazy { FollowingClient(transport, config.baseUrl, credential) }
+    private val session by lazy { SessionClient(transport, config.baseUrl, credential) }
 
     private val _searchState = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
     val searchState: StateFlow<SearchUiState> = _searchState.asStateFlow()
@@ -56,6 +57,23 @@ class SearchViewModel(
     /** Per-source unfollow error message (a Phase-1 refusal, or a transport failure), keyed by id. */
     private val _unfollowErrors = MutableStateFlow<Map<String, String>>(emptyMap())
     val unfollowErrors: StateFlow<Map<String, String>> = _unfollowErrors.asStateFlow()
+
+    /**
+     * This caller's authority (`GET /api/v1/session`, ADR-0061). Null until loaded or
+     * when it cannot be read — treated as read-only, the safe floor. The Follow UI reads
+     * [SessionAuthority.canWrite] to decide whether Follow/Unfollow are live, and
+     * [SessionAuthority.deviceKey] to show which device an operator must authorise.
+     */
+    private val _authority = MutableStateFlow<SessionAuthority?>(null)
+    val authority: StateFlow<SessionAuthority?> = _authority.asStateFlow()
+
+    /** Fetch (or re-check) this session's authority — the "I authorised it, re-check" action. */
+    fun loadAuthority() {
+        viewModelScope.launch {
+            val next = withContext(Dispatchers.IO) { runCatching { session.authority() }.getOrNull() }
+            _authority.value = next
+        }
+    }
 
     fun onSearch(query: String) {
         if (query.isBlank()) {
@@ -75,7 +93,11 @@ class SearchViewModel(
 
     fun onGetOnce(result: SearchResult) = act(result) { acquire.getOnce(result) }
 
-    fun onFollow(result: SearchResult) = act(result) { acquire.follow(result) }
+    // A search hit now carries the feed identity a follow needs (SearchResult.tvdbId,
+    // from WorkSummary.tvdb_id), so follow-from-search is one tap: pass it through to
+    // FollowSourceRequest.tvdb_id. A hit with no stored id sends none and the server
+    // refuses loudly, exactly as before.
+    fun onFollow(result: SearchResult) = act(result) { acquire.follow(result, tvdbId = result.tvdbId) }
 
     private fun act(result: SearchResult, call: () -> AcquireClient.Result) {
         setAcquire(result.workId, AcquireState.InFlight)

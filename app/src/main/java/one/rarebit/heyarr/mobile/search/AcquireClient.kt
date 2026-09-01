@@ -118,9 +118,9 @@ class AcquireClient(
          * message rather than a raw scope string or a faked success.
          */
         const val READ_ONLY_GET_HINT =
-            "This is a read-only session — enrol this device to get content."
+            "This is a read-only session. Authorize this device to manage your library, then try again."
         const val READ_ONLY_FOLLOW_HINT =
-            "This is a read-only session — enrol this device to follow."
+            "This is a read-only session. Authorize this device to follow, then try again."
 
         /** `POST /api/v1/desired` — the live want route (`want_content`). */
         fun desiredUrl(baseUrl: String): String = baseUrl.trimEnd('/') + "/api/v1/desired"

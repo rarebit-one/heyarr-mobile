@@ -59,9 +59,13 @@ class FollowingClient(
     }
 
     companion object {
-        /** A read-scoped session 403s on the write DELETE route; surfaced honestly. */
+        /**
+         * A read-scoped session 403s on the write DELETE route; surfaced honestly. The
+         * interim path to write is a follow-management grant (ADR-0061) an operator
+         * authorises for this device — see [SessionClient]/[AcquireClient].
+         */
         const val READ_ONLY_UNFOLLOW_HINT =
-            "This is a read-only session — enrol this device to unfollow."
+            "This is a read-only session. Authorize this device to manage follows, then try again."
 
         /** `GET /api/v1/followed-sources` — the live `list_followed` route. */
         fun followedUrl(baseUrl: String): String = baseUrl.trimEnd('/') + "/api/v1/followed-sources"
