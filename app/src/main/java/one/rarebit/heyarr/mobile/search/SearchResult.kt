@@ -22,6 +22,16 @@ data class SearchResult(
     val type: String? = null,
     val year: Int? = null,
     val posterUrl: String? = null,
+    /**
+     * The work's stored TVDB external id, when the server has one (heyarr-core
+     * `WorkSummary.tvdb_id`, ADR-0050/0061). This is the **feed identity** a follow
+     * needs: `FollowSourceRequest` takes a `tvdb_id`, so a search hit that carries one
+     * can be followed in a single tap ([AcquireClient.follow] passes it through).
+     * `/search` is library-local, so a work not yet carrying a stored id has none and
+     * following it still needs a URL — that gap is the server's to close, not this
+     * client's.
+     */
+    val tvdbId: String? = null,
 ) {
     /**
      * A hint — not a hard rule — for whether an ongoing **Follow** is meaningful:

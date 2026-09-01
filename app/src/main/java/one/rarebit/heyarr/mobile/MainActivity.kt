@@ -102,6 +102,7 @@ private fun SignedInScaffold(vm: AppViewModel) {
     val acquireStates by searchVm.acquireStates.collectAsStateWithLifecycle()
     val followingState by searchVm.followingState.collectAsStateWithLifecycle()
     val unfollowErrors by searchVm.unfollowErrors.collectAsStateWithLifecycle()
+    val authority by searchVm.authority.collectAsStateWithLifecycle()
 
     var tab by remember { mutableStateOf(Tab.Library) }
 
@@ -133,7 +134,9 @@ private fun SignedInScaffold(vm: AppViewModel) {
             Tab.Following -> FollowingScreen(
                 state = followingState,
                 unfollowErrors = unfollowErrors,
+                authority = authority,
                 onLoad = searchVm::loadFollowing,
+                onAuthorityRecheck = searchVm::loadAuthority,
                 onUnfollow = searchVm::onUnfollow,
                 modifier = content,
             )

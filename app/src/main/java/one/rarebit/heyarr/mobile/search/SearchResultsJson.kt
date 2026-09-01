@@ -36,6 +36,9 @@ object SearchResultsJson {
                 type = firstString(obj, TYPE_KEYS),
                 year = firstInt(obj, listOf("year")),
                 posterUrl = firstString(obj, POSTER_KEYS),
+                // The feed identity a one-tap follow needs (heyarr-core WorkSummary.tvdb_id,
+                // omitempty — absent for a work with no stored external id).
+                tvdbId = firstString(obj, listOf("tvdb_id", "feed_ref")),
             )
         }
     }

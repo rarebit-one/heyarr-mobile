@@ -32,8 +32,13 @@ fun FollowingScreen(
     onLoad: () -> Unit,
     onUnfollow: (FollowedSource) -> Unit,
     modifier: Modifier = Modifier,
+    authority: SessionAuthority? = null,
+    onAuthorityRecheck: () -> Unit = {},
 ) {
-    LaunchedEffect(Unit) { onLoad() }
+    LaunchedEffect(Unit) {
+        onLoad()
+        onAuthorityRecheck()
+    }
     Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         Text("Following", style = MaterialTheme.typography.headlineSmall)
         Text(
@@ -41,6 +46,9 @@ fun FollowingScreen(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
+        if (authority?.isReadOnlySession == true) {
+            ReadOnlyAuthorityBanner(deviceKey = authority.deviceKey, onRecheck = onAuthorityRecheck)
+        }
         when (state) {
             is FollowingUiState.Idle, is FollowingUiState.Loading ->
                 Text("Loading…", modifier = Modifier.padding(top = 12.dp))
@@ -66,6 +74,43 @@ fun FollowingScreen(
                     }
                 }
         }
+    }
+}
+
+/**
+ * Shown when this is a read-only QR/web-login session (ADR-0061): it can browse and
+ * list follows, but Follow / Unfollow will `403` until an operator authorises this
+ * device to manage the library. This is a read-only client, so it cannot grant itself
+ * write — the grant is an admin action elsewhere — so the banner surfaces the exact
+ * `device_key` to authorise and a Re-check that re-reads `GET /session`.
+ */
+@Composable
+private fun ReadOnlyAuthorityBanner(deviceKey: String, onRecheck: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+    ) {
+        Text(
+            "This device is read-only",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        Text(
+            "You can browse and see what's followed, but following and unfollowing need " +
+                "an operator to authorize this device to manage the library. Then Re-check.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        if (deviceKey.isNotBlank()) {
+            Text(
+                "Device to authorize: $deviceKey",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        OutlinedButton(onClick = onRecheck, modifier = Modifier.padding(top = 8.dp)) {
+            Text("Re-check access")
+        }
+        HorizontalDivider(modifier = Modifier.padding(top = 12.dp))
     }
 }
 
