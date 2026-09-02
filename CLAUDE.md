@@ -141,13 +141,19 @@ app/src/main/java/one/rarebit/heyarr/mobile/
                 EnrolScreen + EnrolClient (join a v3 invite, register with ops) · MembershipOps
                 (what to present, ≤ 64) · MembershipClient (GET /membership/{usr}) · HandoffLauncher
   login/        QR login over voidbind-client (LoginTuple façade, QrLoginClient, VoidbindHandoff, screen)
-  library/      LibraryClient (native /api/v1/works) + WorksJson + SubsonicClient stub + screen
+  library/      LibraryClient (native /api/v1/works, paged, recent-first) + WorksJson + SubsonicClient stub
+                + LibraryScreen (pull-to-refresh) → LibraryHost → WorkDetail{Client,Json,State,ViewModel,Screen}
+                (assets via /assets+/editions+/blobs, wants via /desired?work_id, cancel/pause/retry/search a
+                want, remove an asset — every write gated on GET /session authority; no delete-a-work route exists)
   playback/     PlaybackClient (blob-stream target + /playback/plan) + Media3 player
                 (HeyarrDataSource auth+Range data source, PlayerScreen, PlaybackTarget/Json)
   personalstate/ PersonalStateClient (opaque spaces sync) + Unwrapper (decrypt-on-device seam)
-  net/          HttpTransport + OkHttp actual · DeviceAuthTransport (library DeviceAuthPolicy
-                re-mint/retry, Voidbind-Membership header, onUnauthorized veto) ·
-                OkHttpVoidbindTransport (voidbind-client's seam) · JsonEscapes
+  search/       Search + Get-once/Follow (AcquireClient) · Following list (FollowingClient) → FollowingHost →
+                FollowedSourceDetailScreen (feed/type/polls, projected items, unfollow w/ keep_archive choice)
+  net/          HttpTransport (get/post/delete/patch) + OkHttp actual · DeviceAuthTransport (library
+                DeviceAuthPolicy re-mint/retry, Voidbind-Membership header, onUnauthorized veto) ·
+                OkHttpVoidbindTransport (voidbind-client's seam) · JsonEscapes + JsonScan (the shared
+                hand-rolled reader primitives — no org.json) · Timestamps (RFC 3339 → epoch, recent-first)
 app/src/test/…  pure-JVM unit tests (no Android runtime)
 .github/workflows/android.yml   CI: testDebugUnitTest + assembleDebug on ubuntu-latest
 ```

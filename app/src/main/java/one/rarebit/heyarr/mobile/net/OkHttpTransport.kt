@@ -31,6 +31,16 @@ class OkHttpTransport(
         }
     }
 
+    override fun patch(url: String, body: String?, contentType: String?, headers: Map<String, String>): HttpResponse {
+        val media = (contentType ?: "application/json").toMediaTypeOrNull()
+        val reqBody = (body ?: "").toRequestBody(media)
+        val builder = Request.Builder().url(url).patch(reqBody)
+        headers.forEach { (k, v) -> builder.header(k, v) }
+        client.newCall(builder.build()).execute().use { resp ->
+            return HttpResponse(resp.code, resp.body?.string().orEmpty())
+        }
+    }
+
     override fun delete(url: String, headers: Map<String, String>): HttpResponse {
         val builder = Request.Builder().url(url).delete()
         headers.forEach { (k, v) -> builder.header(k, v) }

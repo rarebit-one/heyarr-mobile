@@ -2,6 +2,7 @@ package one.rarebit.heyarr.mobile.search
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import one.rarebit.heyarr.mobile.HeyarrConfig
 import one.rarebit.heyarr.mobile.auth.Credential
+import one.rarebit.heyarr.mobile.library.WorkDetailClient
 import one.rarebit.heyarr.mobile.net.HttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
 
@@ -20,9 +22,10 @@ import one.rarebit.heyarr.mobile.net.OkHttpTransport
  * `POST /api/v1/desired` (`monitor:false`) and **Follow** on
  * `POST /api/v1/followed-sources` ([AcquireClient]); the Following list on
  * `GET /api/v1/followed-sources` and unfollow on `DELETE /api/v1/followed-sources/{id}`
- * ([FollowingClient]).
+ * ([FollowingClient]); and one source's detail (the list row + the wants it projected,
+ * `GET /desired?work_id=` via [WorkDetailClient]).
  *
- * Blocking transport calls run on [Dispatchers.IO]; the UI observes the flows. The
+ * Blocking transport calls run on [io]; the UI observes the flows. The
  * arithmetic-free, network-free state transitions live in [SearchUiState]/[AcquireState]
  * so they are the parts under unit test.
  *
@@ -39,6 +42,7 @@ class SearchViewModel(
      * same `Device`-credential refresh path as the library browse (AppViewModel).
      */
     private val transport: HttpTransport = OkHttpTransport(),
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     private val search by lazy { SearchClient(transport, config.baseUrl, credential) }
@@ -47,6 +51,7 @@ class SearchViewModel(
     }
     private val following by lazy { FollowingClient(transport, config.baseUrl, credential) }
     private val session by lazy { SessionClient(transport, config.baseUrl, credential) }
+    private val detailClient by lazy { WorkDetailClient(transport, config.baseUrl, credential) }
 
     private val _searchState = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
     val searchState: StateFlow<SearchUiState> = _searchState.asStateFlow()
@@ -62,6 +67,13 @@ class SearchViewModel(
     private val _unfollowErrors = MutableStateFlow<Map<String, String>>(emptyMap())
     val unfollowErrors: StateFlow<Map<String, String>> = _unfollowErrors.asStateFlow()
 
+    /** The open followed-source detail, or null when the list is showing. */
+    private val _sourceDetail = MutableStateFlow<SourceDetailUiState?>(null)
+    val sourceDetail: StateFlow<SourceDetailUiState?> = _sourceDetail.asStateFlow()
+
+    private val _sourceDetailRefreshing = MutableStateFlow(false)
+    val sourceDetailRefreshing: StateFlow<Boolean> = _sourceDetailRefreshing.asStateFlow()
+
     /**
      * This caller's authority (`GET /api/v1/session`, ADR-0061). Null until loaded or
      * when it cannot be read — treated as read-only, the safe floor. The Follow UI reads
@@ -74,7 +86,7 @@ class SearchViewModel(
     /** Fetch (or re-check) this session's authority — the "I authorised it, re-check" action. */
     fun loadAuthority() {
         viewModelScope.launch {
-            val next = withContext(Dispatchers.IO) { runCatching { session.authority() }.getOrNull() }
+            val next = withContext(io) { runCatching { session.authority() }.getOrNull() }
             _authority.value = next
         }
     }
@@ -87,7 +99,7 @@ class SearchViewModel(
         _searchState.value = SearchUiState.Searching(query)
         _acquireStates.value = emptyMap()
         viewModelScope.launch {
-            val next = withContext(Dispatchers.IO) {
+            val next = withContext(io) {
                 runCatching { SearchUiState.forResults(query, search.search(query)) }
                     .getOrElse { SearchUiState.Error(it.message ?: "search failed") }
             }
@@ -106,7 +118,7 @@ class SearchViewModel(
     private fun act(result: SearchResult, call: () -> AcquireClient.Result) {
         setAcquire(result.workId, AcquireState.InFlight)
         viewModelScope.launch {
-            val state = withContext(Dispatchers.IO) {
+            val state = withContext(io) {
                 runCatching { AcquireState.of(call()) }
                     .getOrElse { AcquireState.Failed(it.message ?: "action failed") }
             }
@@ -122,8 +134,8 @@ class SearchViewModel(
         _followingState.value = FollowingUiState.Loading
         _unfollowErrors.value = emptyMap()
         viewModelScope.launch {
-            val next = withContext(Dispatchers.IO) {
-                runCatching { FollowingUiState.Loaded(following.list()) }
+            val next = withContext(io) {
+                runCatching { FollowingUiState.Loaded(FollowedSourcesJson.recentFirst(following.list())) }
                     .getOrElse { FollowingUiState.Error(it.message ?: "failed to load following") }
             }
             _followingState.value = next
@@ -137,7 +149,7 @@ class SearchViewModel(
     fun onUnfollow(source: FollowedSource) {
         _unfollowErrors.update { it - source.id }
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
+            val result = withContext(io) {
                 runCatching { following.unfollow(source.id) }
                     .getOrElse { FollowingClient.UnfollowResult.Failed(0, it.message ?: "unfollow failed") }
             }
@@ -148,6 +160,73 @@ class SearchViewModel(
                 is FollowingClient.UnfollowResult.Failed ->
                     _unfollowErrors.update { it + (source.id to result.message) }
             }
+        }
+    }
+
+    // ── Followed-source detail ───────────────────────────────────────────────────
+
+    private var openSourceId: String? = null
+
+    /** Open the detail for [sourceId]: the list row (re-read) plus the wants it projected. */
+    fun openSource(sourceId: String) {
+        openSourceId = sourceId
+        // Show the row we already have while the reads run.
+        val known = (_followingState.value as? FollowingUiState.Loaded)?.sources?.firstOrNull { it.id == sourceId }
+        _sourceDetail.value = known?.let { SourceDetailUiState.Loaded(it) } ?: SourceDetailUiState.Loading
+        reloadSource()
+    }
+
+    /** Re-read the open source (there is no `GET /followed-sources/{id}`; the list is re-read). */
+    fun reloadSource() {
+        val id = openSourceId ?: return
+        _sourceDetailRefreshing.value = true
+        viewModelScope.launch {
+            val next = withContext(io) {
+                val sources = runCatching { following.list() }
+                val source = sources.getOrNull()?.firstOrNull { it.id == id }
+                when {
+                    sources.isFailure -> (_sourceDetail.value as? SourceDetailUiState.Loaded)
+                        ?.copy(error = sources.exceptionOrNull()?.message ?: "failed to load source")
+                        ?: SourceDetailUiState.Error(sources.exceptionOrNull()?.message ?: "failed to load source")
+                    source == null -> (_sourceDetail.value as? SourceDetailUiState.Loaded)?.copy(gone = true, busy = false)
+                        ?: SourceDetailUiState.Error("This source is no longer followed.")
+                    else -> {
+                        val items = source.workId?.let { w -> runCatching { detailClient.wantsForWork(w) } }
+                        SourceDetailUiState.Loaded(
+                            source = source,
+                            items = items?.getOrDefault(emptyList()) ?: emptyList(),
+                            itemsError = items?.exceptionOrNull()?.let { "items: ${it.message}" },
+                        )
+                    }
+                }
+            }
+            if (openSourceId == id) _sourceDetail.value = next
+            _sourceDetailRefreshing.value = false
+        }
+    }
+
+    fun closeSource() {
+        openSourceId = null
+        _sourceDetail.value = null
+    }
+
+    /** Unfollow from the detail with the `keep_archive` choice; the outcome lands on the detail. */
+    fun unfollowFromDetail(source: FollowedSource, keepArchive: Boolean) {
+        _sourceDetail.update { (it as? SourceDetailUiState.Loaded)?.copy(busy = true, error = null) ?: it }
+        viewModelScope.launch {
+            val result = withContext(io) {
+                runCatching { following.unfollow(source.id, keepArchive) }
+                    .getOrElse { FollowingClient.UnfollowResult.Failed(0, it.message ?: "unfollow failed") }
+            }
+            _sourceDetail.update { current ->
+                val loaded = current as? SourceDetailUiState.Loaded ?: return@update current
+                when (result) {
+                    is FollowingClient.UnfollowResult.Removed -> loaded.copy(busy = false, gone = true, error = null)
+                    is FollowingClient.UnfollowResult.Refused -> loaded.copy(busy = false, error = result.message)
+                    is FollowingClient.UnfollowResult.Failed -> loaded.copy(busy = false, error = result.message)
+                }
+            }
+            if (result is FollowingClient.UnfollowResult.Removed) loadFollowing()
         }
     }
 }

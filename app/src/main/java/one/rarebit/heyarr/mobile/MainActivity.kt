@@ -37,12 +37,12 @@ import one.rarebit.heyarr.mobile.device.DeviceKeyring
 import one.rarebit.heyarr.mobile.device.EnrolScreen
 import one.rarebit.heyarr.mobile.device.HandoffLauncher
 import one.rarebit.heyarr.mobile.device.PairDeepLink
-import one.rarebit.heyarr.mobile.library.LibraryScreen
+import one.rarebit.heyarr.mobile.library.LibraryHost
 import one.rarebit.heyarr.mobile.login.LoginScreen
 import one.rarebit.heyarr.mobile.login.LoginUiState
 import one.rarebit.heyarr.mobile.login.VoidbindHandoff
 import one.rarebit.heyarr.mobile.playback.PlayerScreen
-import one.rarebit.heyarr.mobile.search.FollowingScreen
+import one.rarebit.heyarr.mobile.search.FollowingHost
 import one.rarebit.heyarr.mobile.search.SearchScreen
 import one.rarebit.heyarr.mobile.search.SearchViewModel
 import one.rarebit.heyarr.mobile.search.SessionAuthority
@@ -287,13 +287,13 @@ private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, focus
     )
     val searchState by searchVm.searchState.collectAsStateWithLifecycle()
     val acquireStates by searchVm.acquireStates.collectAsStateWithLifecycle()
-    val followingState by searchVm.followingState.collectAsStateWithLifecycle()
-    val unfollowErrors by searchVm.unfollowErrors.collectAsStateWithLifecycle()
-    val searchAuthority by searchVm.authority.collectAsStateWithLifecycle()
+    val libraryRefreshing by vm.libraryRefreshing.collectAsStateWithLifecycle()
 
     var tab by remember { mutableStateOf(Tab.Library) }
     // A deep-linked invite (each one bumps focusDevice) opens the Device tab.
     LaunchedEffect(focusDevice) { if (focusDevice > 0) tab = Tab.Device }
+    // A work's "Open source" jumps to the Following tab with that source's detail open.
+    var openSourceId by remember { mutableStateOf<String?>(null) }
     val user = (loginState as? LoginUiState.Approved)?.user
 
     Scaffold(
@@ -315,7 +315,19 @@ private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, focus
     ) { padding ->
         val content = Modifier.fillMaxSize().padding(padding)
         when (tab) {
-            Tab.Library -> LibraryScreen(state = libraryState, onPlay = vm::play, modifier = content)
+            Tab.Library -> LibraryHost(
+                state = libraryState,
+                refreshing = libraryRefreshing,
+                authority = authority,
+                baseUrl = config.baseUrl,
+                credential = credential!!,
+                transport = vm.transport,
+                onRefresh = vm::refreshLibrary,
+                onPlay = vm::playAsset,
+                onOpenSource = { openSourceId = it.id; tab = Tab.Following },
+                onAuthorityRecheck = vm::loadSessionAuthority,
+                modifier = content,
+            )
             Tab.Search -> SearchScreen(
                 state = searchState,
                 acquireStates = acquireStates,
@@ -324,13 +336,10 @@ private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, focus
                 onFollow = searchVm::onFollow,
                 modifier = content,
             )
-            Tab.Following -> FollowingScreen(
-                state = followingState,
-                unfollowErrors = unfollowErrors,
-                authority = searchAuthority,
-                onLoad = searchVm::loadFollowing,
-                onAuthorityRecheck = searchVm::loadAuthority,
-                onUnfollow = searchVm::onUnfollow,
+            Tab.Following -> FollowingHost(
+                vm = searchVm,
+                openSourceId = openSourceId,
+                onClearOpen = { openSourceId = null },
                 modifier = content,
             )
             Tab.Device -> EnrolScreen(

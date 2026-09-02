@@ -1,5 +1,6 @@
 package one.rarebit.heyarr.mobile.search
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,23 +9,28 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import one.rarebit.heyarr.mobile.net.Timestamps
 
 /**
  * The **Following** list — every source the user is subscribed to (an ongoing
- * `follow_source`), with its archive counters. Wired to the live
- * `GET /api/v1/followed-sources` list and `DELETE /api/v1/followed-sources/{id}`
- * unfollow via [FollowingClient]. A per-row Unfollow keeps the archive (Phase-1
+ * `follow_source`), with its archive counters, most recently polled first. Wired to
+ * the live `GET /api/v1/followed-sources` list and `DELETE /api/v1/followed-sources/{id}`
+ * unfollow via [FollowingClient]. Pull down to reload; tap a row for its detail
+ * ([FollowedSourceDetailScreen]). A per-row Unfollow keeps the archive (Phase-1
  * default); a refusal or failure shows inline beneath that row.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FollowingScreen(
     state: FollowingUiState,
@@ -34,49 +40,51 @@ fun FollowingScreen(
     modifier: Modifier = Modifier,
     authority: SessionAuthority? = null,
     onAuthorityRecheck: () -> Unit = {},
+    onOpen: (FollowedSource) -> Unit = {},
 ) {
     LaunchedEffect(Unit) {
         onLoad()
         onAuthorityRecheck()
     }
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        Text("Following", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "Sources you're subscribed to — heyarr keeps archiving new items from each.",
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
-        )
-        if (authority?.isReadOnly == true) {
-            ReadOnlyAuthorityBanner(
-                deviceKey = authority.deviceKey,
-                isDevice = authority.isDevice,
-                onRecheck = onAuthorityRecheck,
-            )
-        }
-        when (state) {
-            is FollowingUiState.Idle, is FollowingUiState.Loading ->
-                Text("Loading…", modifier = Modifier.padding(top = 12.dp))
-            is FollowingUiState.Error ->
+    val refreshing = state is FollowingUiState.Loading
+    PullToRefreshBox(isRefreshing = refreshing, onRefresh = onLoad, modifier = modifier.fillMaxSize()) {
+        LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            item {
+                Text("Following", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 16.dp))
                 Text(
-                    state.message,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 12.dp),
+                    "Sources you're subscribed to — heyarr keeps archiving new items from each. Recent first · pull to refresh.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
                 )
-            is FollowingUiState.Loaded ->
-                if (state.sources.isEmpty()) {
-                    Text("Not following anything yet.", modifier = Modifier.padding(top = 12.dp))
-                } else {
-                    LazyColumn(modifier = Modifier.padding(top = 12.dp)) {
-                        items(state.sources) { source ->
-                            FollowedRow(
-                                source = source,
-                                error = unfollowErrors[source.id],
-                                onUnfollow = { onUnfollow(source) },
-                            )
-                            HorizontalDivider()
-                        }
+            }
+            if (authority?.isReadOnly == true) {
+                item {
+                    ReadOnlyAuthorityBanner(
+                        deviceKey = authority.deviceKey,
+                        isDevice = authority.isDevice,
+                        onRecheck = onAuthorityRecheck,
+                    )
+                }
+            }
+            when (state) {
+                is FollowingUiState.Idle, is FollowingUiState.Loading -> item { Text("Loading…") }
+                is FollowingUiState.Error -> item { Text(state.message, color = MaterialTheme.colorScheme.error) }
+                is FollowingUiState.Loaded -> {
+                    if (state.sources.isEmpty()) {
+                        item { Text("Not following anything yet.") }
+                    }
+                    items(state.sources, key = { it.id }) { source ->
+                        FollowedRow(
+                            source = source,
+                            error = unfollowErrors[source.id],
+                            canWrite = authority?.canWrite == true,
+                            onOpen = { onOpen(source) },
+                            onUnfollow = { onUnfollow(source) },
+                        )
+                        HorizontalDivider()
                     }
                 }
+            }
         }
     }
 }
@@ -89,7 +97,7 @@ fun FollowingScreen(
  * `device_key` to authorise and a Re-check that re-reads `GET /session`.
  */
 @Composable
-private fun ReadOnlyAuthorityBanner(deviceKey: String, isDevice: Boolean, onRecheck: () -> Unit) {
+fun ReadOnlyAuthorityBanner(deviceKey: String, isDevice: Boolean, onRecheck: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
     ) {
@@ -104,8 +112,9 @@ private fun ReadOnlyAuthorityBanner(deviceKey: String, isDevice: Boolean, onRech
                     "device read scope until an admin authorizes its key " +
                     "(POST /api/v1/session/management-grants {device_key}). Then Re-check."
             } else {
-                "You can browse and see what's followed, but following and unfollowing need " +
-                    "an operator to authorize this device to manage the library. Then Re-check."
+                "You can browse and see what's followed, but managing the library — following, " +
+                    "unfollowing, cancelling wants, removing files — needs an operator to authorize " +
+                    "this device. Then Re-check."
             },
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp),
@@ -128,10 +137,12 @@ private fun ReadOnlyAuthorityBanner(deviceKey: String, isDevice: Boolean, onRech
 private fun FollowedRow(
     source: FollowedSource,
     error: String?,
+    canWrite: Boolean,
+    onOpen: () -> Unit,
     onUnfollow: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -143,6 +154,7 @@ private fun FollowedRow(
                     add("${source.itemsArchived ?: 0}/${source.itemsKnown ?: 0} archived")
                 }
                 source.health?.let { add(it) }
+                Timestamps.short(source.lastPolledAt)?.let { add("polled $it") }
             }.joinToString(" · ")
             if (meta.isNotEmpty()) {
                 Text(meta, style = MaterialTheme.typography.bodySmall)
@@ -156,6 +168,6 @@ private fun FollowedRow(
                 )
             }
         }
-        OutlinedButton(onClick = onUnfollow) { Text("Unfollow") }
+        OutlinedButton(onClick = onUnfollow, enabled = canWrite) { Text("Unfollow") }
     }
 }
