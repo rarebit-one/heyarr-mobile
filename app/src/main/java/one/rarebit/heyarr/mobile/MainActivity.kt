@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import one.rarebit.heyarr.mobile.device.EnrolUiState
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -46,6 +47,7 @@ import one.rarebit.heyarr.mobile.library.LibraryHost
 import one.rarebit.heyarr.mobile.login.LoginScreen
 import one.rarebit.heyarr.mobile.login.LoginUiState
 import one.rarebit.heyarr.mobile.login.VoidbindHandoff
+import one.rarebit.heyarr.mobile.playback.MediaCodecCapabilities
 import one.rarebit.heyarr.mobile.playback.PlayerScreen
 import one.rarebit.heyarr.mobile.search.FollowingHost
 import one.rarebit.heyarr.mobile.search.SearchScreen
@@ -107,6 +109,10 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Draw edge-to-edge on every SDK (35+ forces it anyway); each screen keeps its
+        // content inside the safe-drawing insets — Scaffold/TopAppBar/NavigationBar do
+        // that themselves, the player overlay does it explicitly.
+        enableEdgeToEdge()
         // Cold start from the deep link: route the launching intent. (On a recreation the
         // intent is the same one; re-routing re-parks/re-joins, which is right — the join
         // state it held was ephemeral.)
@@ -132,6 +138,8 @@ class MainActivity : FragmentActivity() {
                     vm.deviceName = app.deviceName
                     app.credentialProvider = { vm.credentialOrNull() }
                     vm.attachDevice(keyring)
+                    // What this phone can decode, for the playback planner (#432).
+                    vm.capabilities = MediaCodecCapabilities.probe(appContext)
                 }
                 // The "Pairing with Cruciform…" foreground-service notification needs this
                 // on Android 13+; the service runs regardless, the notice just stays hidden.
@@ -295,6 +303,8 @@ private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, focus
             target = playing.target,
             title = playing.title,
             onBack = vm::stopPlayback,
+            banner = playing.banner,
+            onIssue = vm::onPlaybackIssue,
             client = vm.httpClient,
             modifier = Modifier.fillMaxSize(),
         )
