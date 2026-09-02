@@ -9,14 +9,11 @@ package one.rarebit.heyarr.mobile.login
  * short-lived **Bearer** session token (bootstrap credential — see
  * `auth/Credential.Session`).
  *
- * ── Consumption of voidbind-kmp ────────────────────────────────────────────────
- * The device-side approval half (scan the QR → hardware-gated Ed25519 sign → POST
- * approve) lives in voidbind-kmp's `voidbind-client` (`WebLoginClient`, `WebLogin`,
- * `LoginApproval`). That module is NOT yet published as a consumable artifact, so
- * this interface is the documented seam and [QrLoginClient] is a wire-compatible
- * scaffold of the *initiator* half (`POST /login` + poll `GET /login/{id}`).
- * TODO(voidbind-kmp packaging): replace this seam with the published
- * `voidbind-client` once it exists (see settings.gradle.kts).
+ * The wire brain is voidbind-client's `WebLoginClient` (published from voidbind-kmp;
+ * byte-identical to voidbind-go's `weblogin` handler). [QrLoginClient] is the app's
+ * state machine over its `createLogin`/`poll` calls; the device-side approval half
+ * (scan → hardware-gated sign → approve) belongs to the authenticator app, not this
+ * consumption client.
  */
 interface VoidbindLogin {
 

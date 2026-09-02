@@ -11,9 +11,20 @@ concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
 
+# The workflow token only needs to read the repo and pull the private
+# `voidbind-client` artifact from the same org's GitHub Packages.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Gradle resolves `one.rarebit.voidbind:voidbind-client` from GitHub Packages
+    # (settings.gradle.kts) with these credentials.
+    env:
+      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 

@@ -1,5 +1,7 @@
 package one.rarebit.heyarr.mobile.library
 
+import one.rarebit.heyarr.mobile.net.JsonEscapes
+
 /**
  * A minimal, dependency-free parser for heyarr's `GET /api/v1/works` list body,
  * kept JVM-testable (no org.json, which is stubbed in unit tests) for the same
@@ -115,9 +117,7 @@ object WorksJson {
             val c = json[i]
             when {
                 c == '\\' && i + 1 < json.length -> {
-                    val n = json[i + 1]
-                    sb.append(when (n) { 'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; else -> n })
-                    i += 2
+                    i = JsonEscapes.append(sb, json, i)
                 }
                 c == '"' -> return sb.toString()
                 else -> { sb.append(c); i++ }

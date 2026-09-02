@@ -46,8 +46,12 @@ fun FollowingScreen(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
-        if (authority?.isReadOnlySession == true) {
-            ReadOnlyAuthorityBanner(deviceKey = authority.deviceKey, onRecheck = onAuthorityRecheck)
+        if (authority?.isReadOnly == true) {
+            ReadOnlyAuthorityBanner(
+                deviceKey = authority.deviceKey,
+                isDevice = authority.isDevice,
+                onRecheck = onAuthorityRecheck,
+            )
         }
         when (state) {
             is FollowingUiState.Idle, is FollowingUiState.Loading ->
@@ -85,7 +89,7 @@ fun FollowingScreen(
  * `device_key` to authorise and a Re-check that re-reads `GET /session`.
  */
 @Composable
-private fun ReadOnlyAuthorityBanner(deviceKey: String, onRecheck: () -> Unit) {
+private fun ReadOnlyAuthorityBanner(deviceKey: String, isDevice: Boolean, onRecheck: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
     ) {
@@ -95,8 +99,14 @@ private fun ReadOnlyAuthorityBanner(deviceKey: String, onRecheck: () -> Unit) {
             color = MaterialTheme.colorScheme.error,
         )
         Text(
-            "You can browse and see what's followed, but following and unfollowing need " +
-                "an operator to authorize this device to manage the library. Then Re-check.",
+            if (isDevice) {
+                "This phone is enrolled with its own device certificate, but the node grants a " +
+                    "device read scope until an admin authorizes its key " +
+                    "(POST /api/v1/session/management-grants {device_key}). Then Re-check."
+            } else {
+                "You can browse and see what's followed, but following and unfollowing need " +
+                    "an operator to authorize this device to manage the library. Then Re-check."
+            },
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp),
         )

@@ -1,5 +1,7 @@
 package one.rarebit.heyarr.mobile.playback
 
+import one.rarebit.heyarr.mobile.net.JsonEscapes
+
 /**
  * A minimal, dependency-free reader for heyarr's playback-negotiation responses —
  * `POST /api/v1/playback/plan` (read-scoped) and `POST /api/v1/playback` (write) —
@@ -55,9 +57,7 @@ object PlaybackJson {
             val c = json[i]
             when {
                 c == '\\' && i + 1 < json.length -> {
-                    val n = json[i + 1]
-                    sb.append(when (n) { 'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; else -> n })
-                    i += 2
+                    i = JsonEscapes.append(sb, json, i)
                 }
                 c == '"' -> return sb.toString()
                 else -> { sb.append(c); i++ }

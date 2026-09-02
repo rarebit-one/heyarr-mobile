@@ -20,8 +20,25 @@ data class HeyarrConfig(
      * default). The Settings screen can override per install.
      */
     val defaultQualityProfile: String = DEFAULT_QUALITY_PROFILE,
+    /**
+     * The Voidbind pairing relay this device enrols through (voidbind-go `relay`
+     * wire: `POST {relay}/v1/sessions`, `PUT|GET {relay}/v1/sessions/{id}/{role}/{type}`).
+     * Null means the node's own mount, [DEFAULT_RELAY_PATH] under [baseUrl]. Note the
+     * node's legacy `/pair/sessions/{s}/slots/{slot}` relay speaks heyarr's OLD pairflow,
+     * which voidbind-client's `DevicePairing` does not — the voidbind-go relay must be
+     * mounted (heyarr-core is adding it under `/pair/v1`).
+     */
+    val relayBaseUrl: String? = null,
 ) {
+    /** The relay origin actually used: the override, else `<baseUrl>/pair/v1`. */
+    val effectiveRelayBase: String
+        get() = relayBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
+            ?: (baseUrl.trimEnd('/') + DEFAULT_RELAY_PATH)
+
     companion object {
+        /** Where the node mounts the voidbind-go relay, relative to [baseUrl]. */
+        const val DEFAULT_RELAY_PATH = "/pair/v1"
+
         /**
          * The build-time default origin (gradle property `heyarrBaseUrl`, defaulting to
          * the live Bartley Ridge node). Not a secret — a LAN address the Settings

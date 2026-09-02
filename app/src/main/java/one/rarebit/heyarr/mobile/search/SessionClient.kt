@@ -35,6 +35,16 @@ data class SessionAuthority(
 ) {
     /** A read-only QR/web-login session: it can browse and list, but not follow yet. */
     val isReadOnlySession: Boolean get() = kind == "session" && !canWrite
+
+    /** An enrolled device presenting its cert (`Authorization: Device …`). */
+    val isDevice: Boolean get() = kind == "device"
+
+    /**
+     * Read-only however we authenticated. On current heyarr-core `main` an enrolled
+     * device is read-scoped unconditionally; once an admin-authorised device earns
+     * write (heyarr-core #417 / ADR-0065) `can_write` flips and this follows it.
+     */
+    val isReadOnly: Boolean get() = !canWrite
 }
 
 /**

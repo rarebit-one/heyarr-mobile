@@ -10,19 +10,34 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import one.rarebit.heyarr.mobile.auth.Credential
+import one.rarebit.heyarr.mobile.auth.DeviceCredential
+import one.rarebit.heyarr.mobile.auth.DeviceSession
+import one.rarebit.heyarr.mobile.auth.PossessionProof
+import one.rarebit.heyarr.mobile.device.DeviceKeyInfo
+import one.rarebit.heyarr.mobile.device.DeviceKeyring
+import one.rarebit.heyarr.mobile.device.EnrolClient
+import one.rarebit.heyarr.mobile.device.EnrolUiState
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.LibraryUiState
 import one.rarebit.heyarr.mobile.library.Work
 import one.rarebit.heyarr.mobile.login.LoginUiState
 import one.rarebit.heyarr.mobile.login.QrLoginClient
 import one.rarebit.heyarr.mobile.login.VoidbindLogin
+import one.rarebit.heyarr.mobile.net.DeviceAuthTransport
+import one.rarebit.heyarr.mobile.net.HttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
+import one.rarebit.heyarr.mobile.net.OkHttpVoidbindTransport
 import one.rarebit.heyarr.mobile.playback.PlaybackClient
 import one.rarebit.heyarr.mobile.playback.PlaybackTarget
 import one.rarebit.heyarr.mobile.search.SessionAuthority
 import one.rarebit.heyarr.mobile.search.SessionClient
 import one.rarebit.heyarr.mobile.settings.InMemorySettingsStore
 import one.rarebit.heyarr.mobile.settings.SettingsStore
+import one.rarebit.voidbind.Invite
+import one.rarebit.voidbind.flow.DevicePairing
+import one.rarebit.voidbind.net.RelayClient
+import one.rarebit.voidbind.net.HttpTransport as VoidbindHttpTransport
+import java.security.SecureRandom
 
 /** A resolved item the player is showing: its stream target and a display title. */
 data class NowPlaying(val target: PlaybackTarget, val title: String)
@@ -42,9 +57,23 @@ class AppViewModel(
     private val loginFactory: (baseUrl: String) -> VoidbindLogin = { base ->
         QrLoginClient(http = OkHttpTransport(), rpBase = base)
     },
+    /** voidbind-client's transport (the pairing relay); injected for tests. */
+    private val voidbindTransport: VoidbindHttpTransport = OkHttpVoidbindTransport(),
 ) : ViewModel() {
 
-    private val transport = OkHttpTransport()
+    /**
+     * Once this phone is enrolled, its live `Device` credential (cert + the possession
+     * proof in force). Null while signed in with a QR session, or before enrolment.
+     */
+    @Volatile
+    private var deviceSession: DeviceSession? = null
+
+    /**
+     * The app's transport: every `/api/v1` request an enrolled device makes goes through
+     * [DeviceAuthTransport], which keeps the `Device` credential fresh and re-mints +
+     * retries once on a 401 (mobile-client constraint 2).
+     */
+    val transport: HttpTransport = DeviceAuthTransport(OkHttpTransport()) { deviceSession }
 
     /** Shared OkHttp client for the Media3 blob-stream data source. */
     val httpClient: OkHttpClient = OkHttpClient()
@@ -116,6 +145,7 @@ class AppViewModel(
     /** Drop the session and return to the login screen. */
     fun signOut() {
         credential = null
+        deviceSession = null
         _sessionAuthority.value = null
         _nowPlaying.value = null
         _libraryState.value = LibraryUiState.Loading
@@ -156,6 +186,227 @@ class AppViewModel(
             }
             _sessionAuthority.value = next
         }
+    }
+
+    // ── Device enrolment (voidbind-client DeviceKeyStore + DevicePairing) ─────────
+
+    private var keyring: DeviceKeyring? = null
+
+    private val _enrolState = MutableStateFlow<EnrolUiState>(EnrolUiState.Loading)
+    val enrolState: StateFlow<EnrolUiState> = _enrolState.asStateFlow()
+
+    /** This phone's device keys (key, honest tier, cert), once read. */
+    private val _deviceInfo = MutableStateFlow<DeviceKeyInfo?>(null)
+    val deviceInfo: StateFlow<DeviceKeyInfo?> = _deviceInfo.asStateFlow()
+
+    /** An in-flight pairing (this device is the relay responder). */
+    private var pairing: DevicePairing? = null
+    private var handshake: DevicePairing.Handshake? = null
+
+    /**
+     * Attach the phone's [DeviceKeyring] (needs an Activity for the biometric prompt).
+     * Reads the device keys — provisioning them on first run, which shows the prompt —
+     * and, if a cert is already stored, adopts the Device credential straight away so
+     * an enrolled phone never falls back to the QR session.
+     */
+    fun attachDevice(ring: DeviceKeyring) {
+        keyring = ring
+        if (deviceSession != null) return
+        viewModelScope.launch {
+            // peek(): never provisions, so a fresh install does not open with a biometric prompt.
+            val result = withContext(Dispatchers.IO) { runCatching { ring.peek() } }
+            result.onSuccess { info ->
+                _deviceInfo.value = info
+                when {
+                    info == null -> _enrolState.value = EnrolUiState.Unprovisioned
+                    info.certToken != null -> adoptDevice(ring, info.certToken)
+                    else -> _enrolState.value = EnrolUiState.Ready(info)
+                }
+            }.onFailure {
+                _enrolState.value = EnrolUiState.Error(null, "device key unavailable: ${it.message}")
+            }
+        }
+    }
+
+    /** First run: generate + seal the device keys (shows the user-presence prompt). */
+    fun provisionDevice() {
+        val ring = keyring ?: return
+        viewModelScope.launch {
+            _enrolState.value = EnrolUiState.Loading
+            val result = withContext(Dispatchers.IO) { runCatching { ring.info() } }
+            result.onSuccess { info ->
+                _deviceInfo.value = info
+                _enrolState.value = EnrolUiState.Ready(info)
+            }.onFailure {
+                _enrolState.value = EnrolUiState.Error(null, "could not create the device key: ${it.message}")
+            }
+        }
+    }
+
+    /** Switch the app to the Device credential for [certToken]: mint a proof, load the library. */
+    private suspend fun adoptDevice(ring: DeviceKeyring, certToken: String) {
+        val adopted = withContext(Dispatchers.IO) {
+            runCatching {
+                val identity = ring.identity()
+                val session = DeviceSession(
+                    certToken = certToken,
+                    prover = DeviceCredential.Prover { identity.sign(it) },
+                    ttlSeconds = DEVICE_PROOF_TTL_SECONDS,
+                )
+                val cred = session.current() // mints the first proof — may prompt
+                deviceSession = session
+                cred
+            }
+        }
+        adopted.onSuccess { cred ->
+            credential = cred
+            _loginState.value = LoginUiState.Approved(user = null)
+            _enrolState.value = EnrolUiState.Enrolled(
+                info = _deviceInfo.value ?: withContext(Dispatchers.IO) { ring.info() },
+                registration = "Signed in with this device's certificate.",
+                needsAdmin = false,
+            )
+            loadSessionAuthority()
+            loadLibrary()
+        }.onFailure {
+            _enrolState.value = EnrolUiState.Error(_deviceInfo.value, "could not sign with the device key: ${it.message}")
+        }
+    }
+
+    /**
+     * This device opens a relay session on [HeyarrConfig.effectiveRelayBase] and shows
+     * the invite for the authorising side to take (QR, or the same-phone hand-off), then
+     * runs the responder handshake as soon as that side joins.
+     */
+    fun startPairing() {
+        val ring = keyring ?: return
+        val info = _deviceInfo.value ?: return
+        viewModelScope.launch {
+            val relay = config.effectiveRelayBase
+            val invite = withContext(Dispatchers.IO) {
+                runCatching {
+                    val session = RelayClient.createSession(voidbindTransport, relay)
+                    val salt = ByteArray(32).also { SecureRandom().nextBytes(it) }
+                    Invite.encode(relay, session, salt)
+                }
+            }.getOrElse {
+                _enrolState.value = EnrolUiState.Error(info, "could not open a pairing session on $relay: ${it.message}")
+                return@launch
+            }
+            _enrolState.value = EnrolUiState.Inviting(info, invite)
+            runHandshake(ring, info, invite)
+        }
+    }
+
+    /** Join a pairing the authorising side started (a pasted `voidbind:pair?…` invite). */
+    fun joinPairing(inviteQr: String) {
+        val ring = keyring ?: return
+        val info = _deviceInfo.value ?: return
+        viewModelScope.launch {
+            _enrolState.value = EnrolUiState.Inviting(info, inviteQr)
+            runHandshake(ring, info, inviteQr)
+        }
+    }
+
+    private suspend fun runHandshake(ring: DeviceKeyring, info: DeviceKeyInfo, inviteQr: String) {
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                val p = DevicePairing(voidbindTransport, ring.identity())
+                p to p.begin(inviteQr)
+            }
+        }
+        result.onSuccess { (p, h) ->
+            pairing = p
+            handshake = h
+            _enrolState.value = EnrolUiState.CompareSas(info, h.sas)
+        }.onFailure {
+            _enrolState.value = EnrolUiState.Error(info, "pairing handshake failed: ${it.message}")
+        }
+    }
+
+    /** The human saw the SAME code on both screens: receive the cert, store it, register, adopt. */
+    fun confirmSas() {
+        val ring = keyring ?: return
+        val p = pairing ?: return
+        val h = handshake ?: return
+        val info = _deviceInfo.value
+        viewModelScope.launch {
+            _enrolState.value = EnrolUiState.Loading
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    val cert = p.confirm(h)
+                    ring.saveCert(cert)
+                    val identity = ring.identity()
+                    val proof = PossessionProof.mint(cert, System.currentTimeMillis() / 1000, sign = identity::sign)
+                    EnrolClient(transport, config.baseUrl).register(cert, proof, deviceName, credential)
+                }
+            }
+            pairing = null
+            handshake = null
+            outcome.onSuccess { reg ->
+                val fresh = withContext(Dispatchers.IO) { ring.info() }
+                _deviceInfo.value = fresh
+                val (text, needsAdmin) = when (reg) {
+                    is EnrolClient.Outcome.Registered -> "Registered with the node via ${reg.via}." to false
+                    is EnrolClient.Outcome.NeedsAdmin ->
+                        ("The cert is stored, but the node does not know it yet (${reg.reason}). An admin " +
+                            "must register it: POST /api/v1/identities/devices {\"cert\":…,\"name\":…}.") to true
+                    is EnrolClient.Outcome.Failed -> "Registration failed: ${reg.message}" to true
+                }
+                _enrolState.value = EnrolUiState.Enrolled(fresh, text, needsAdmin)
+            }.onFailure {
+                _enrolState.value = EnrolUiState.Error(info, "enrolment failed: ${it.message}")
+            }
+        }
+    }
+
+    /** The codes differ — abort; nothing was signed or received. */
+    fun rejectSas() {
+        pairing = null
+        handshake = null
+        _enrolState.value = EnrolUiState.Error(_deviceInfo.value, "Security codes differed — pairing aborted. Nothing was exchanged.")
+    }
+
+    fun retryEnrol() {
+        pairing = null
+        handshake = null
+        val info = _deviceInfo.value
+        _enrolState.value = if (info == null) EnrolUiState.Unprovisioned else if (info.certToken != null) {
+            EnrolUiState.Enrolled(info, "This device holds a certificate.", false)
+        } else EnrolUiState.Ready(info)
+    }
+
+    /** After enrolment: start using the Device credential now. */
+    fun useDeviceCredential() {
+        val ring = keyring ?: return
+        val cert = _deviceInfo.value?.certToken ?: return
+        viewModelScope.launch { adoptDevice(ring, cert) }
+    }
+
+    /** Drop the stored cert (keys stay) and fall back to QR login. */
+    fun forgetDevice() {
+        val ring = keyring ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { runCatching { ring.clearCert() } }
+            deviceSession = null
+            val info = withContext(Dispatchers.IO) { runCatching { ring.info() }.getOrNull() }
+            _deviceInfo.value = info
+            _enrolState.value = if (info != null) EnrolUiState.Ready(info) else EnrolUiState.Unprovisioned
+            signOut()
+        }
+    }
+
+    /** A human-readable name for the node's device registry. */
+    var deviceName: String = "heyarr-mobile"
+
+    private companion object {
+        /**
+         * How long one possession proof is reused before the app re-signs. Each signature
+         * unseals the device key behind a 30 s user-presence window, so the Go default
+         * (2 min) would mean a biometric prompt every couple of minutes of use; the server
+         * checks `exp` strictly but does not cap it. Re-minted early on a 401 regardless.
+         */
+        const val DEVICE_PROOF_TTL_SECONDS = 60L * 60
     }
 
     /**
