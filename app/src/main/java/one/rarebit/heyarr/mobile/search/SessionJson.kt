@@ -1,5 +1,7 @@
 package one.rarebit.heyarr.mobile.search
 
+import one.rarebit.heyarr.mobile.net.JsonEscapes
+
 /**
  * Dependency-free parser for heyarr's `GET /api/v1/session` response
  * (`{ kind, principal_id?, device_key?, scopes:[…], can_write, management_authorized }`,
@@ -36,9 +38,7 @@ object SessionJson {
             val c = json[i]
             when {
                 c == '\\' && i + 1 < json.length -> {
-                    val n = json[i + 1]
-                    sb.append(when (n) { 'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; else -> n })
-                    i += 2
+                    i = JsonEscapes.append(sb, json, i)
                 }
                 c == '"' -> return sb.toString()
                 else -> { sb.append(c); i++ }

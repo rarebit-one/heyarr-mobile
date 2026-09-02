@@ -2,7 +2,6 @@ package one.rarebit.heyarr.mobile
 
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
@@ -26,14 +25,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.util.UnstableApi
+import one.rarebit.heyarr.mobile.device.AndroidBiometricGate
+import one.rarebit.heyarr.mobile.device.DeviceKeyring
+import one.rarebit.heyarr.mobile.device.EnrolScreen
+import one.rarebit.heyarr.mobile.device.HandoffLauncher
 import one.rarebit.heyarr.mobile.library.LibraryScreen
 import one.rarebit.heyarr.mobile.login.LoginScreen
 import one.rarebit.heyarr.mobile.login.LoginUiState
+import one.rarebit.heyarr.mobile.login.VoidbindHandoff
 import one.rarebit.heyarr.mobile.playback.PlayerScreen
 import one.rarebit.heyarr.mobile.search.FollowingScreen
 import one.rarebit.heyarr.mobile.search.SearchScreen
@@ -47,12 +52,22 @@ private enum class Tab(val label: String, val glyph: String) {
     Library("Library", "▤"),
     Search("Search", "⌕"),
     Following("Following", "★"),
+    Device("Device", "⚿"),
 }
 
-class MainActivity : ComponentActivity() {
+/**
+ * A [FragmentActivity] because `BiometricPrompt` — which gates every use of the
+ * hardware-sealed device key — binds to one. `singleTop` so the authenticator's
+ * `heyarr-mobile://login` callback foregrounds this instance instead of stacking.
+ */
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val appContext = applicationContext
+        // This phone's device keys, biometric-gated through this activity. Attached
+        // once per activity; the ViewModel outlives rotations and keeps the session.
+        val keyring = DeviceKeyring(this, AndroidBiometricGate(this))
+        val voidbindInstalled = HandoffLauncher.canOpen(this, "voidbind:login?id=probe&rp=probe")
         setContent {
             MaterialTheme {
                 val vm: AppViewModel = viewModel(
@@ -60,9 +75,16 @@ class MainActivity : ComponentActivity() {
                         initializer { AppViewModel(settings = PrefsSettingsStore(appContext)) }
                     },
                 )
+                LaunchedEffect(vm) {
+                    vm.deviceName = "heyarr-mobile on ${android.os.Build.MODEL}"
+                    vm.attachDevice(keyring)
+                }
                 val loginState by vm.loginState.collectAsStateWithLifecycle()
                 val config by vm.configState.collectAsStateWithLifecycle()
                 var showSettings by rememberSaveable { mutableStateOf(false) }
+                var showEnrol by rememberSaveable { mutableStateOf(false) }
+                val enrolState by vm.enrolState.collectAsStateWithLifecycle()
+                val context = LocalContext.current
 
                 if (showSettings) {
                     BackHandler { showSettings = false }
@@ -76,12 +98,39 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 } else if (loginState is LoginUiState.Approved) {
-                    SignedInScaffold(vm, onSettings = { showSettings = true })
+                    SignedInScaffold(vm, voidbindInstalled = voidbindInstalled, onSettings = { showSettings = true })
+                } else if (showEnrol) {
+                    // Enrolment needs no session: pairing runs over the relay, and an enrolled
+                    // phone then signs in with its cert instead of a QR login.
+                    BackHandler { showEnrol = false }
+                    Scaffold(topBar = { HeyarrTopBar(subtitle = config.baseUrl, onSettings = null) }) { padding ->
+                        EnrolScreen(
+                            state = enrolState,
+                            onCreateKey = vm::provisionDevice,
+                            onStartPairing = vm::startPairing,
+                            onJoinInvite = vm::joinPairing,
+                            onOpenInVoidbind = if (voidbindInstalled) {
+                                { invite -> HandoffLauncher.open(context, VoidbindHandoff.pairUri(invite)) }
+                            } else null,
+                            onSasMatches = vm::confirmSas,
+                            onSasMismatch = vm::rejectSas,
+                            onRetry = vm::retryEnrol,
+                            onForget = vm::forgetDevice,
+                            onDone = { vm.useDeviceCredential(); showEnrol = false },
+                            modifier = Modifier.padding(padding),
+                        )
+                    }
                 } else {
                     Scaffold(topBar = { HeyarrTopBar(subtitle = config.baseUrl, onSettings = { showSettings = true }) }) { padding ->
                         LoginScreen(
                             state = loginState,
                             onSignIn = vm::signIn,
+                            // Same-phone approval: hand the tuple to the Voidbind authenticator;
+                            // the RP is still polled for the outcome.
+                            onApproveOnThisPhone = if (voidbindInstalled) {
+                                { tuple -> HandoffLauncher.open(context, VoidbindHandoff.loginUri(tuple)) }
+                            } else null,
+                            onEnrolDevice = { showEnrol = true },
                             modifier = Modifier.padding(padding),
                         )
                     }
@@ -118,16 +167,22 @@ private fun HeyarrTopBar(subtitle: String, onSettings: (() -> Unit)?) {
     )
 }
 
-/** "Signed in as … · read-only" from the login result + `GET /api/v1/session`. */
+/**
+ * "Signed in as … · read-only" from the login result + `GET /api/v1/session`. An
+ * enrolled device (`kind == "device"`) is named as such, and its scope is whatever
+ * the node actually granted its key — read-only until an admin authorises it.
+ */
 internal fun sessionSubtitle(user: String?, authority: SessionAuthority?, baseUrl: String): String {
     val who = user?.takeIf { it.isNotBlank() }
         ?: authority?.principalId?.takeIf { it.isNotBlank() }?.let { shortPrincipal(it) }
     val scope = when {
         authority == null -> "read-only (session unverified)"
         authority.canWrite -> "can write"
+        authority.isDevice -> "read-only (device not yet authorised)"
         else -> "read-only"
     }
-    val subject = if (who != null) "Signed in as $who" else "Signed in"
+    val how = if (authority?.isDevice == true) "Enrolled device" else "Signed in"
+    val subject = if (who != null) "$how as $who" else how
     return "$subject · $scope · $baseUrl"
 }
 
@@ -142,13 +197,14 @@ internal fun shortPrincipal(principal: String): String {
 
 @UnstableApi
 @Composable
-private fun SignedInScaffold(vm: AppViewModel, onSettings: () -> Unit) {
+private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, onSettings: () -> Unit) {
     val libraryState by vm.libraryState.collectAsStateWithLifecycle()
     val nowPlaying by vm.nowPlaying.collectAsStateWithLifecycle()
     val playbackNotice by vm.playbackNotice.collectAsStateWithLifecycle()
     val loginState by vm.loginState.collectAsStateWithLifecycle()
     val authority by vm.sessionAuthority.collectAsStateWithLifecycle()
     val config by vm.configState.collectAsStateWithLifecycle()
+    val enrolState by vm.enrolState.collectAsStateWithLifecycle()
 
     // Surface a "cannot stream directly" notice, then clear it so it fires once.
     val context = LocalContext.current
@@ -176,9 +232,11 @@ private fun SignedInScaffold(vm: AppViewModel, onSettings: () -> Unit) {
     // config it was built against changes (the key).
     val credential = vm.credentialOrNull()
     val searchVm: SearchViewModel = viewModel(
-        key = "search:${config.baseUrl}:${config.defaultQualityProfile}",
+        // Keyed on the credential SHAPE too: enrolling swaps the Bearer session for a
+        // Device cert, and the features must be rebuilt on it.
+        key = "search:${config.baseUrl}:${config.defaultQualityProfile}:${credential?.javaClass?.simpleName}",
         factory = viewModelFactory {
-            initializer { SearchViewModel(config, credential!!) }
+            initializer { SearchViewModel(config, credential!!, vm.transport) }
         },
     )
     val searchState by searchVm.searchState.collectAsStateWithLifecycle()
@@ -225,6 +283,21 @@ private fun SignedInScaffold(vm: AppViewModel, onSettings: () -> Unit) {
                 onLoad = searchVm::loadFollowing,
                 onAuthorityRecheck = searchVm::loadAuthority,
                 onUnfollow = searchVm::onUnfollow,
+                modifier = content,
+            )
+            Tab.Device -> EnrolScreen(
+                state = enrolState,
+                onCreateKey = vm::provisionDevice,
+                onStartPairing = vm::startPairing,
+                onJoinInvite = vm::joinPairing,
+                onOpenInVoidbind = if (voidbindInstalled) {
+                    { invite -> HandoffLauncher.open(context, VoidbindHandoff.pairUri(invite)) }
+                } else null,
+                onSasMatches = vm::confirmSas,
+                onSasMismatch = vm::rejectSas,
+                onRetry = vm::retryEnrol,
+                onForget = vm::forgetDevice,
+                onDone = { vm.useDeviceCredential(); tab = Tab.Library },
                 modifier = content,
             )
         }

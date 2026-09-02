@@ -10,7 +10,9 @@ android {
 
     defaultConfig {
         applicationId = "one.rarebit.heyarr.mobile"
-        minSdk = 24
+        // minSdk 33: the published `voidbind-client` Android variant is minSdk 33
+        // (StrongBox + a platform Ed25519 provider + the modern BiometricPrompt API).
+        minSdk = 33
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
@@ -71,6 +73,18 @@ dependencies {
     // QR encoding for the `voidbind:login?…` tuple (pure Java — the BitMatrix half is
     // JVM-unit-tested; only the Bitmap conversion touches Android).
     implementation("com.google.zxing:core:3.5.3")
+
+    // ── Voidbind shared client (the identity seam) ──────────────────────────────
+    // `WebLoginClient`/`LoginQr` (QR web-login, wire-identical to voidbind-go),
+    // `DeviceIdentity` + the hardware-sealed `DeviceKeyStore` (ADR-0001), `Cert`,
+    // and the `DevicePairing` relay flow that enrols this device. Resolved from
+    // GitHub Packages (settings.gradle.kts).
+    implementation("one.rarebit.voidbind:voidbind-client:0.1.0")
+    // The device key's hardware wrapping key is user-auth-gated: BiometricPrompt
+    // needs a FragmentActivity, and a modern fragment so it still extends the
+    // ComponentActivity that activity-compose's setContent requires.
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.fragment:fragment:1.8.3")
 
     // ── Media3 / ExoPlayer (M10 playback) ───────────────────────────────────────
     // The player itself, the PlayerView (transport controls) and the OkHttp-backed

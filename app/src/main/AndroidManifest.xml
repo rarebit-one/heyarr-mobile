@@ -4,6 +4,18 @@
     <!-- The login broker, library API, blob stream and personal-state sync are all network. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The device signing key's hardware wrapping key is user-presence gated (BiometricPrompt). -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- Package visibility (Android 11+): let us resolve the Voidbind authenticator for the
+         same-phone `voidbind:` hand-off, so the "Approve on this phone" / "Open in Voidbind"
+         buttons only show when something actually handles the scheme. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="voidbind" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="true"
@@ -16,10 +28,20 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- `heyarr-mobile://login` — the callback the authenticator may open after
+                 approving a handed-off login, to bring us back to the foreground. The
+                 outcome itself still arrives by polling GET /login/{id}. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="heyarr-mobile" android:host="login" />
             </intent-filter>
         </activity>
     </application>

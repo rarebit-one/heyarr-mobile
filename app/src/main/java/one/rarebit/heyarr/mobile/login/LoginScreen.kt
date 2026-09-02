@@ -11,6 +11,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -45,6 +46,14 @@ sealed interface LoginUiState {
 fun LoginScreen(
     state: LoginUiState,
     onSignIn: () -> Unit,
+    /**
+     * Same-phone hand-off: when the Voidbind authenticator is installed here, fire the
+     * login tuple at it as an `ACTION_VIEW` intent (no second-phone QR dance). Null
+     * hides the button — the QR is always there as the fallback.
+     */
+    onApproveOnThisPhone: ((qrTuple: String) -> Unit)? = null,
+    /** Skip the QR session entirely: enrol this phone as a device (needs no login). */
+    onEnrolDevice: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -70,11 +79,22 @@ fun LoginScreen(
                     )
                 }
                 Button(onClick = onSignIn) { Text("Sign in with Voidbind") }
+                if (onEnrolDevice != null) {
+                    TextButton(onClick = onEnrolDevice, modifier = Modifier.padding(top = 8.dp)) {
+                        Text("Enrol this device instead")
+                    }
+                }
             }
             is LoginUiState.AwaitingScan -> {
                 CircularProgressIndicator()
+                if (onApproveOnThisPhone != null) {
+                    Button(
+                        onClick = { onApproveOnThisPhone(state.qrTuple) },
+                        modifier = Modifier.padding(top = 16.dp),
+                    ) { Text("Approve on this phone") }
+                }
                 Text(
-                    "Scan this with your authenticator:",
+                    if (onApproveOnThisPhone != null) "…or scan this with your authenticator:" else "Scan this with your authenticator:",
                     modifier = Modifier.padding(top = 16.dp),
                 )
                 QrImage(state.qrTuple, modifier = Modifier.padding(top = 16.dp))

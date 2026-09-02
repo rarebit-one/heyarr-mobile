@@ -3,22 +3,15 @@ package one.rarebit.heyarr.mobile.auth
 /**
  * The device credential presented under heyarr's `Device` auth scheme
  * (`Authorization: Device <cert>~<proof>`, ADR-0048). This object owns the WIRE
- * FORMAT (the `~` join, matching deviceauth.CredentialSeparator); it does NOT own
- * the crypto that produces a proof.
+ * FORMAT (the `~` join, `enrolment.CredentialSeparator` — a tilde is outside the
+ * base64url alphabet so it can never occur inside either half); the proof bytes are
+ * [PossessionProof]'s and the signing key is the [Prover]'s.
  *
- * ── What is real here ──────────────────────────────────────────────────────────
- * [format] / [parse] are pure and unit-tested: they build and split the
- * `<cert>~<proof>` value exactly as heyarr's verifier expects.
- *
- * ── What is PHONE-GATED (a documented seam, no crypto in this repo) ────────────
- * A [Prover] turns the enrolment cert into a *fresh* possession proof by signing a
- * challenge with the device private key. On a phone that key is **non-exportable**
- * and lives in the Android Keystore / StrongBox; the Ed25519 signature happens
- * **in-enclave** and the key never leaves it (mobile-client constraint 1 — the
- * `Unwrapper`/prover interface pattern, ADR-0022's hardware-root revisit). A slept,
- * clock-drifted device must **re-mint** the proof on wake rather than fail
- * (constraint 2, ADR-0048 skew-toward-refusing). Implementing [KeystoreProver] and
- * the enrolment handshake is device-side work — see the README follow-ups.
+ * On a phone the [Prover] is the hardware-sealed Ed25519 device key from
+ * voidbind-client's `DeviceKeyStore` (voidbind-kmp ADR-0001: a software seed sealed
+ * by a non-extractable, user-presence-gated AES key in StrongBox/TEE — the seed is
+ * unsealed only transiently to sign, and signing needs a recent biometric). In unit
+ * tests it is a software Ed25519 key.
  */
 object DeviceCredential {
 
@@ -40,13 +33,66 @@ object DeviceCredential {
     }
 
     /**
-     * Mints a fresh possession proof for a challenge. On a phone this signs
-     * **in-enclave** with a non-exportable key — the interface deliberately never
-     * yields the private key (constraint 1).
-     *
-     * TODO(device-login, phone-gated): the real Keystore/StrongBox implementation.
+     * Signs a possession-proof body with the device private key. The interface
+     * deliberately never yields the key (mobile-client constraint 1): on a phone the
+     * signature happens through the sealed keystore and may block on a biometric.
      */
     fun interface Prover {
-        fun sign(challenge: ByteArray): ByteArray
+        fun sign(message: ByteArray): ByteArray
+    }
+
+    /**
+     * Mint a complete [Credential.Device] for [certToken] at [now] (unix seconds):
+     * a fresh [PossessionProof] signed by [prover], joined to the cert.
+     */
+    fun mint(
+        certToken: String,
+        prover: Prover,
+        now: Long,
+        ttlSeconds: Long = PossessionProof.DEFAULT_TTL_SECONDS,
+    ): Credential.Device = Credential.Device(certToken, PossessionProof.mint(certToken, now, ttlSeconds, prover::sign))
+}
+
+/**
+ * An enrolled device's live credential: the long-lived cert plus the proof currently
+ * in force, re-minted when it is about to lapse or when the server refuses it.
+ *
+ * Why not sign every request: on Android each signature unseals the seed behind a
+ * 30-second user-presence window (`DeviceKeyStore`), so a per-request proof would
+ * mean a biometric prompt every half-minute. Instead one proof is minted for
+ * [ttlSeconds] and reused; [current] re-mints proactively once it is within
+ * [PossessionProof.SKEW_SECONDS] of expiry, and [remint] is the forced refresh the
+ * transport uses after a `401` (mobile-client constraint 2: re-mint on wake, never
+ * fail hard on `expired`/`not_yet_valid`). The server does not cap a proof's ttl —
+ * the client chooses; the Go client's default is 2 minutes.
+ */
+class DeviceSession(
+    val certToken: String,
+    private val prover: DeviceCredential.Prover,
+    private val clock: () -> Long = { System.currentTimeMillis() / 1000 },
+    private val ttlSeconds: Long = PossessionProof.DEFAULT_TTL_SECONDS,
+) {
+    @Volatile
+    private var live: Credential.Device? = null
+
+    @Volatile
+    private var expiresAt: Long = 0
+
+    /** The credential to present now — re-minted if the proof is stale or about to be. */
+    @Synchronized
+    fun current(): Credential.Device {
+        val cred = live
+        if (cred != null && clock() + PossessionProof.SKEW_SECONDS < expiresAt) return cred
+        return remint()
+    }
+
+    /** Force a fresh proof (after a `401`, or on wake). May prompt for user presence. */
+    @Synchronized
+    fun remint(): Credential.Device {
+        val now = clock()
+        val cred = DeviceCredential.mint(certToken, prover, now, ttlSeconds)
+        live = cred
+        expiresAt = now + ttlSeconds
+        return cred
     }
 }

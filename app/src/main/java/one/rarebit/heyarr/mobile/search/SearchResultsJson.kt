@@ -1,5 +1,7 @@
 package one.rarebit.heyarr.mobile.search
 
+import one.rarebit.heyarr.mobile.net.JsonEscapes
+
 /**
  * Dependency-free parser for heyarr's `POST /api/v1/search` response body
  * (`{ "works": [ { work_id, content_type, title, year? } ] }`, heyarr-core
@@ -112,9 +114,7 @@ object SearchResultsJson {
             val c = json[i]
             when {
                 c == '\\' && i + 1 < json.length -> {
-                    val n = json[i + 1]
-                    sb.append(when (n) { 'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; else -> n })
-                    i += 2
+                    i = JsonEscapes.append(sb, json, i)
                 }
                 c == '"' -> return sb.toString()
                 else -> { sb.append(c); i++ }

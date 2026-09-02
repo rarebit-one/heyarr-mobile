@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import one.rarebit.heyarr.mobile.HeyarrConfig
 import one.rarebit.heyarr.mobile.auth.Credential
+import one.rarebit.heyarr.mobile.net.HttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
 
 /**
@@ -33,9 +34,12 @@ import one.rarebit.heyarr.mobile.net.OkHttpTransport
 class SearchViewModel(
     private val config: HeyarrConfig,
     private val credential: Credential,
+    /**
+     * The app's transport — injected so an enrolled device's requests go through the
+     * same `Device`-credential refresh path as the library browse (AppViewModel).
+     */
+    private val transport: HttpTransport = OkHttpTransport(),
 ) : ViewModel() {
-
-    private val transport = OkHttpTransport()
 
     private val search by lazy { SearchClient(transport, config.baseUrl, credential) }
     private val acquire by lazy {

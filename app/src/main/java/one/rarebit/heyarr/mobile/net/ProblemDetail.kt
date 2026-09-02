@@ -29,9 +29,7 @@ object ProblemDetail {
             val c = body[i]
             when {
                 c == '\\' && i + 1 < body.length -> {
-                    val n = body[i + 1]
-                    sb.append(when (n) { 'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; else -> n })
-                    i += 2
+                    i = JsonEscapes.append(sb, body, i)
                 }
                 c == '"' -> return sb.toString().ifBlank { null }
                 else -> { sb.append(c); i++ }

@@ -27,34 +27,22 @@ This is a **scaffold** — a buildable, tested foundation, not a finished app.
   authenticator + the shared `voidbind-client` (`WebLoginClient`, `LoginQr`, `WebLogin`,
   `LoginApproval`). This app delegates login approval to that authenticator.
 
-### voidbind-kmp consumption — packaging follow-up
+### voidbind-kmp consumption
 
-voidbind-kmp does **not** publish a consumable Maven artifact yet (`0.1.0-SNAPSHOT`, no
-`maven-publish`), so this app **cannot** depend on it over the wire and CI can't fetch it.
-Until a `voidbind-client` module is extracted + published (plan §5/§6), this repo ships a
-thin, **wire-compatible** `login/` seam that mirrors voidbind-kmp's `WebLoginClient` create/poll
-and `LoginQr` tuple byte-for-byte. `settings.gradle.kts` documents a commented
-`includeBuild("../voidbind-kmp")` for local composite builds, and `login/VoidbindLogin.kt` +
-`auth/DeviceCredential.kt` carry the `TODO`s to swap in the real artifact once it exists.
+This app depends on the **published** shared client,
+`one.rarebit.voidbind:voidbind-client:0.1.0` (GitHub Packages, private — a token with
+`read:packages` is required even for a same-org read). `settings.gradle.kts` reads
+`gpr.user` / `gpr.token` from `~/.gradle/gradle.properties`, or `GITHUB_ACTOR` /
+`GITHUB_TOKEN` from the environment; CI passes its own workflow token. Locally:
 
-## Pointing it at a node
+```sh
+GITHUB_ACTOR=<your login> GITHUB_TOKEN=$(gh auth token) ./gradlew testDebugUnitTest assembleDebug
+```
 
-The base URL resolves **build default → runtime override**:
-
-- **Build default** — `BuildConfig.HEYARR_BASE_URL`, from the gradle property
-  `heyarrBaseUrl` (`-PheyarrBaseUrl=https://…` or `gradle.properties`). Unset, it is the live
-  Bartley Ridge node `http://192.168.16.224:7777` (plain HTTP on the LAN; reachable over the
-  Tailscale subnet route when out).
-- **Runtime override** — the in-app **Settings** screen (gear in the top bar): base URL +
-  quality profile, persisted in SharedPreferences (`settings/SettingsStore`). Saving a changed
-  base URL signs the app out (a session token is only good for the node that minted it).
-
-**Cleartext:** the node's login `rp` origin is `http://`, so the release network-security
-config allows cleartext only to the build-default host (`res/xml/network_security_config.xml`);
-the **debug** build overrides it to allow cleartext everywhere so the override can target any
-LAN host. Login renders the `voidbind:login?…` tuple as a real QR bitmap (ZXing core) with the
-text kept beneath as a fallback; after approval the top bar shows *signed in as … · read-only /
-can write* from `GET /api/v1/session`.
+`login/` is now a thin façade over the library's `WebLoginClient` / `LoginQr`, and the
+device credential is real: `auth/PossessionProof` mints heyarr's possession proof
+byte-for-byte (pinned by Go-minted golden vectors) and signs it with the phone's
+hardware-sealed key (`device/DeviceKeyring` → voidbind-client `DeviceKeyStore`).
 
 ## Build / test
 
@@ -75,9 +63,14 @@ These need real hardware / a live server and can't be proven in CI:
   real codec decoding the stream and a scrub issuing live 206 range reads can only be proven on
   a device/emulator. The `POST /api/v1/playback` transcode/remux negotiation is wired
   (`PlaybackClient.plan`) but keyed on an enrolled `device_id`, so it goes live with device auth.
-- **Device-cert login** — the in-enclave Ed25519 **possession proof** (Keystore/StrongBox,
-  non-exportable key) + the enrolment handshake that turns a QR-bootstrapped session into an
-  enrolled `Device` credential; re-mint-on-wake for a slept, clock-drifted device (ADR-0048).
+- **Device-cert login** — now **ships**: the sealed-key possession proof, the pairing
+  handshake (`device/`, this phone = relay responder) and re-mint-on-401. What is still
+  gated on the *server*: a voidbind-go relay mounted under the node (`<baseUrl>/pair/v1`),
+  a self-enrol route (`POST /enrol`) or an admin registering the cert
+  (`POST /api/v1/identities/devices`), and write scope for a device (heyarr-core #417 +
+  `POST /api/v1/session/management-grants`). Completing a pairing needs the owner's
+  identity on the other side, so it is proven on-device, not in CI. Honest key tier on
+  the Nothing Phone (2a): **TEE**, not StrongBox.
 - **On-device personal-state decrypt** — the real `Unwrapper` (X25519 ECDH in-enclave → HKDF →
   the space key) + AEAD decryption of opaque changes, and the local **Personal MCP** (#372/#387)
   that reads the decrypted state. **No crypto ships in this repo.**
