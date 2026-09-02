@@ -50,10 +50,14 @@ sealed interface EnrolUiState {
      * and is connecting to the relay it names to run the handshake. [inviteQr] is the
      * `voidbind:pair?…` tuple (v3: it carries the identity, `usr`).
      */
-    data class Joining(val info: DeviceKeyInfo, val inviteQr: String) : EnrolUiState
+    data class Joining(val info: DeviceKeyInfo, val inviteQr: String, val sameDevice: Boolean = false) : EnrolUiState
 
-    /** Handshake done: show the SAS for the human to compare on both screens. */
-    data class CompareSas(val info: DeviceKeyInfo, val sas: String) : EnrolUiState
+    /**
+     * Handshake done: show the SAS for the human to compare on both screens. [sameDevice]
+     * when the invite came from Cruciform on THIS phone (voidbind-kmp ADR-0006) — the
+     * other screen is one app-switch away, and the confirm happens there.
+     */
+    data class CompareSas(val info: DeviceKeyInfo, val sas: String, val sameDevice: Boolean = false) : EnrolUiState
 
     /** The admission was delivered, verified and stored; [registration] says whether the node knows it yet. */
     data class Enrolled(val info: DeviceKeyInfo, val registration: String, val needsAdmin: Boolean) : EnrolUiState
@@ -94,6 +98,9 @@ fun EnrolScreen(
     onForget: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    /** An invite from Cruciform on this phone waiting for the device key (see [AppViewModel.receiveInviteLink]). */
+    parkedInvite: String? = null,
+    onDiscardParked: () -> Unit = {},
 ) {
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
@@ -117,6 +124,7 @@ fun EnrolScreen(
             EnrolUiState.Loading, EnrolUiState.Unprovisioned -> null
         }
         if (info != null) DeviceKeyCard(info)
+        if (parkedInvite != null) ParkedInviteCard(parkedInvite, onDiscardParked)
 
         when (state) {
             EnrolUiState.Loading -> {
@@ -145,10 +153,14 @@ fun EnrolScreen(
             }
             is EnrolUiState.Joining -> {
                 val parsed = PairInvite.check(state.inviteQr) as? PairInvite.Valid
-                Text("Joining the pairing…", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Connecting to the relay the invite names and running the handshake. The other " +
-                        "device must prove it is a member of the identity before any code is shown; " +
+                    if (state.sameDevice) "Joining Cruciform's invite…" else "Joining the pairing…",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    "Connecting to the relay the invite names and running the handshake. " +
+                        (if (state.sameDevice) "Cruciform on this phone" else "The other device") +
+                        " must prove it is a member of the identity before any code is shown; " +
                         "next you'll compare a security code with the one on its screen.",
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -162,7 +174,12 @@ fun EnrolScreen(
             is EnrolUiState.CompareSas -> {
                 Text("Compare the security code", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "The other device — Cruciform, or the Mac's terminal — is showing a code too.",
+                    if (state.sameDevice) {
+                        "Cruciform on this phone is showing a code too. Switch back to it (recent apps) " +
+                            "and compare — you approve there, with your fingerprint. Come back here after."
+                    } else {
+                        "The other device — Cruciform, or the Mac's terminal — is showing a code too."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                 )
                 SasCard(state.sas)
@@ -213,6 +230,35 @@ fun EnrolScreen(
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * An invite Cruciform on this phone handed us before this phone could join it — no
+ * device key yet (creating one asks for a fingerprint, so a link never triggers that
+ * by itself), or the keys still loading. It joins automatically once the key exists.
+ */
+@Composable
+private fun ParkedInviteCard(inviteQr: String, onDiscard: () -> Unit) {
+    val parsed = PairInvite.check(inviteQr) as? PairInvite.Valid
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Invite from Cruciform on this phone", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Cruciform's \"Add a device\" sent this phone an invite. Create the device key below " +
+                    "(you'll confirm with your fingerprint) and the invite is joined automatically.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "Relay: " + (parsed?.relay ?: "—") + "\nIdentity: " + (parsed?.user ?: "—"),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+            )
+            OutlinedButton(onClick = onDiscard) { Text("Discard invite") }
+        }
     }
 }
 

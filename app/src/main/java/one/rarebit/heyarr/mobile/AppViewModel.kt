@@ -214,6 +214,17 @@ class AppViewModel(
     private var pairing: DevicePairing? = null
     private var handshake: DevicePairing.Handshake? = null
 
+    /**
+     * An invite that arrived by deep link from Cruciform on this phone
+     * (`heyarr-mobile://pair?invite=…`, voidbind-kmp ADR-0006) while this phone could
+     * not join it yet — no device key (the user must create one, which prompts for a
+     * fingerprint) or the keys still being read. Joined automatically as soon as the
+     * phone is [EnrolUiState.Ready]; shown on the Enrol screen meanwhile so the user
+     * knows why they are being asked for a key. Cleared on join, forget, or a fresh link.
+     */
+    private val _parkedInvite = MutableStateFlow<String?>(null)
+    val parkedInvite: StateFlow<String?> = _parkedInvite.asStateFlow()
+
     private fun nowSeconds(): Long = System.currentTimeMillis() / 1000
 
     /**
@@ -233,12 +244,84 @@ class AppViewModel(
                 when {
                     info == null -> _enrolState.value = EnrolUiState.Unprovisioned
                     info.certToken != null -> adoptDevice(ring, info.certToken)
-                    else -> _enrolState.value = EnrolUiState.Ready(info)
+                    else -> {
+                        _enrolState.value = EnrolUiState.Ready(info)
+                        continueParkedInvite()
+                    }
                 }
             }.onFailure {
                 _enrolState.value = EnrolUiState.Error(null, "device key unavailable: ${it.message}")
             }
         }
+    }
+
+    /**
+     * An invite handed to us by Cruciform on this phone (the `heyarr-mobile://pair` deep
+     * link). Already validated by [one.rarebit.heyarr.mobile.device.PairDeepLink] through
+     * the library's parser; re-checked in [joinPairing] regardless. Joins straight away
+     * when this phone has an unenrolled device key; otherwise **parks** it — a fresh
+     * install first needs its key created (a fingerprint prompt the user must answer,
+     * so it is never auto-triggered by a link), and a phone still reading its keys
+     * continues when the read lands ([attachDevice]). An already-enrolled phone refuses:
+     * it holds an admission, and only the user can choose to forget it.
+     */
+    fun receiveInviteLink(inviteQr: String) {
+        val invite = when (val checked = PairInvite.check(inviteQr)) {
+            is PairInvite.Valid -> checked.inviteQr
+            is PairInvite.Invalid -> {
+                _enrolState.value = EnrolUiState.Error(_deviceInfo.value, checked.message)
+                return
+            }
+        }
+        // A new link supersedes any in-flight join of an older one.
+        pairing = null
+        handshake = null
+        when (val state = _enrolState.value) {
+            is EnrolUiState.Ready -> {
+                _parkedInvite.value = null
+                joinPairing(invite, sameDevice = true)
+            }
+            is EnrolUiState.Enrolled -> {
+                _parkedInvite.value = null
+                _enrolState.value = EnrolUiState.Error(
+                    state.info,
+                    "This phone is already enrolled as a device. Forget the enrolment first if you want " +
+                        "to join a new invite.",
+                )
+            }
+            else -> {
+                // Unprovisioned / Loading / Joining / CompareSas / Removed / Error: park it and
+                // put the screen where the user can act (create the key, or retry).
+                _parkedInvite.value = invite
+                when (state) {
+                    is EnrolUiState.Joining, is EnrolUiState.CompareSas -> {
+                        val info = _deviceInfo.value
+                        if (info != null) joinPairing(invite, sameDevice = true) else _enrolState.value = EnrolUiState.Unprovisioned
+                    }
+                    is EnrolUiState.Error -> _enrolState.value =
+                        if (state.info == null) EnrolUiState.Unprovisioned else EnrolUiState.Ready(state.info).also { continueParkedInvite() }
+                    else -> Unit
+                }
+            }
+        }
+    }
+
+    /** Join the parked invite, if any, now that the phone is [EnrolUiState.Ready]. */
+    private fun continueParkedInvite() {
+        val invite = _parkedInvite.value ?: return
+        if (_enrolState.value !is EnrolUiState.Ready) return
+        _parkedInvite.value = null
+        joinPairing(invite, sameDevice = true)
+    }
+
+    /** A `heyarr-mobile://pair` link that was ours but unusable: say so on the Enrol screen. */
+    fun rejectInviteLink(message: String) {
+        _enrolState.value = EnrolUiState.Error(_deviceInfo.value, message)
+    }
+
+    /** The user dismissed a parked invite without joining it. */
+    fun discardParkedInvite() {
+        _parkedInvite.value = null
     }
 
     /** First run: generate + seal the device keys (shows the user-presence prompt). */
@@ -250,6 +333,7 @@ class AppViewModel(
             result.onSuccess { info ->
                 _deviceInfo.value = info
                 _enrolState.value = EnrolUiState.Ready(info)
+                continueParkedInvite()
             }.onFailure {
                 _enrolState.value = EnrolUiState.Error(null, "could not create the device key: ${it.message}")
             }
@@ -296,7 +380,14 @@ class AppViewModel(
      * through the library's parser ([PairInvite]) even though the screen already did,
      * so a caller can never push a non-invite into the handshake.
      */
-    fun joinPairing(inviteQr: String) {
+    fun joinPairing(inviteQr: String) = joinPairing(inviteQr, sameDevice = false)
+
+    /**
+     * [sameDevice] marks an invite that came from Cruciform on THIS phone (the deep
+     * link), so the SAS screen tells the user to switch back to Cruciform to compare
+     * and confirm there, rather than to look at "the other device".
+     */
+    private fun joinPairing(inviteQr: String, sameDevice: Boolean) {
         val ring = keyring ?: return
         val info = _deviceInfo.value ?: return
         val invite = when (val checked = PairInvite.check(inviteQr)) {
@@ -307,12 +398,12 @@ class AppViewModel(
             }
         }
         viewModelScope.launch {
-            _enrolState.value = EnrolUiState.Joining(info, invite)
-            runHandshake(ring, info, invite)
+            _enrolState.value = EnrolUiState.Joining(info, invite, sameDevice)
+            runHandshake(ring, info, invite, sameDevice)
         }
     }
 
-    private suspend fun runHandshake(ring: DeviceKeyring, info: DeviceKeyInfo, inviteQr: String) {
+    private suspend fun runHandshake(ring: DeviceKeyring, info: DeviceKeyInfo, inviteQr: String, sameDevice: Boolean) {
         val result = withContext(Dispatchers.IO) {
             runCatching {
                 val p = DevicePairing(voidbindTransport, ring.identity(), clock = ::nowSeconds)
@@ -322,7 +413,7 @@ class AppViewModel(
         result.onSuccess { (p, h) ->
             pairing = p
             handshake = h
-            _enrolState.value = EnrolUiState.CompareSas(info, h.sas)
+            _enrolState.value = EnrolUiState.CompareSas(info, h.sas, sameDevice)
         }.onFailure {
             _enrolState.value = EnrolUiState.Error(info, "pairing handshake failed: ${it.message}")
         }
@@ -438,6 +529,7 @@ class AppViewModel(
         viewModelScope.launch {
             withContext(Dispatchers.IO) { runCatching { ring.clearCert() } }
             deviceCredential = null
+            _parkedInvite.value = null
             val info = withContext(Dispatchers.IO) { runCatching { ring.info() }.getOrNull() }
             _deviceInfo.value = info
             _enrolState.value = if (info != null) EnrolUiState.Ready(info) else EnrolUiState.Unprovisioned

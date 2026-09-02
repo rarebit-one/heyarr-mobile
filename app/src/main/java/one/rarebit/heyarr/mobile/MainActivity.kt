@@ -1,5 +1,6 @@
 package one.rarebit.heyarr.mobile
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -35,6 +36,7 @@ import one.rarebit.heyarr.mobile.device.AndroidBiometricGate
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
 import one.rarebit.heyarr.mobile.device.EnrolScreen
 import one.rarebit.heyarr.mobile.device.HandoffLauncher
+import one.rarebit.heyarr.mobile.device.PairDeepLink
 import one.rarebit.heyarr.mobile.library.LibraryScreen
 import one.rarebit.heyarr.mobile.login.LoginScreen
 import one.rarebit.heyarr.mobile.login.LoginUiState
@@ -56,13 +58,44 @@ private enum class Tab(val label: String, val glyph: String) {
 }
 
 /**
+ * A pairing invite that arrived by deep link (`heyarr-mobile://pair?invite=…`) — from
+ * Cruciform's "Add a device" on this same phone (voidbind-kmp ADR-0006). [seq] makes two
+ * identical links distinct so the second re-fires. Either a usable [inviteQr] or a
+ * [problem] to show.
+ */
+private data class LinkedInvite(val inviteQr: String?, val problem: String?, val seq: Int)
+
+/**
  * A [FragmentActivity] because `BiometricPrompt` — which gates every use of the
  * hardware-sealed device key — binds to one. `singleTop` so the authenticator's
- * `heyarr-mobile://login` callback foregrounds this instance instead of stacking.
+ * `heyarr-mobile://login` callback (and its `heyarr-mobile://pair` handoff) foregrounds
+ * this instance via [onNewIntent] instead of stacking; a cold start routes the launching
+ * intent in [onCreate].
  */
 class MainActivity : FragmentActivity() {
+
+    private var linkedInvite by mutableStateOf<LinkedInvite?>(null)
+    private var linkSeq = 0
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        routeLink(intent)?.let { linkedInvite = it }
+    }
+
+    /** The `heyarr-mobile://pair` handoff, if this intent is one; null for anything else. */
+    private fun routeLink(intent: Intent?): LinkedInvite? = when (val r = PairDeepLink.route(intent?.action, intent?.dataString)) {
+        is PairDeepLink.Invite -> LinkedInvite(r.inviteQr, null, ++linkSeq)
+        is PairDeepLink.Invalid -> LinkedInvite(null, r.message, ++linkSeq)
+        null -> null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Cold start from the deep link: route the launching intent. (On a recreation the
+        // intent is the same one; re-routing re-parks/re-joins, which is right — the join
+        // state it held was ephemeral.)
+        linkedInvite = routeLink(intent)
         val appContext = applicationContext
         // This phone's device keys, biometric-gated through this activity. Attached
         // once per activity; the ViewModel outlives rotations and keeps the session.
@@ -84,7 +117,21 @@ class MainActivity : FragmentActivity() {
                 var showSettings by rememberSaveable { mutableStateOf(false) }
                 var showEnrol by rememberSaveable { mutableStateOf(false) }
                 val enrolState by vm.enrolState.collectAsStateWithLifecycle()
+                val parkedInvite by vm.parkedInvite.collectAsStateWithLifecycle()
                 val context = LocalContext.current
+
+                // Cruciform handed us an invite (or a broken link): route it into the same
+                // join path a scan takes, and put the Enrol screen in front — the standalone
+                // one before sign-in, the Device tab once signed in.
+                var focusDevice by rememberSaveable { mutableStateOf(0) }
+                val link = linkedInvite
+                LaunchedEffect(link) {
+                    link ?: return@LaunchedEffect
+                    if (link.inviteQr != null) vm.receiveInviteLink(link.inviteQr) else vm.rejectInviteLink(link.problem ?: "bad invite link")
+                    showSettings = false
+                    showEnrol = true
+                    focusDevice = link.seq
+                }
 
                 if (showSettings) {
                     BackHandler { showSettings = false }
@@ -98,7 +145,7 @@ class MainActivity : FragmentActivity() {
                         )
                     }
                 } else if (loginState is LoginUiState.Approved) {
-                    SignedInScaffold(vm, voidbindInstalled = voidbindInstalled, onSettings = { showSettings = true })
+                    SignedInScaffold(vm, voidbindInstalled = voidbindInstalled, focusDevice = focusDevice, onSettings = { showSettings = true })
                 } else if (showEnrol) {
                     // Enrolment needs no session: pairing runs over the relay, and an enrolled
                     // phone then signs in with its cert instead of a QR login.
@@ -114,6 +161,8 @@ class MainActivity : FragmentActivity() {
                             onForget = vm::forgetDevice,
                             onDone = { vm.useDeviceCredential(); showEnrol = false },
                             modifier = Modifier.padding(padding),
+                            parkedInvite = parkedInvite,
+                            onDiscardParked = vm::discardParkedInvite,
                         )
                     }
                 } else {
@@ -193,8 +242,9 @@ internal fun shortPrincipal(principal: String): String {
 
 @UnstableApi
 @Composable
-private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, onSettings: () -> Unit) {
+private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, focusDevice: Int = 0, onSettings: () -> Unit) {
     val libraryState by vm.libraryState.collectAsStateWithLifecycle()
+    val parkedInvite by vm.parkedInvite.collectAsStateWithLifecycle()
     val nowPlaying by vm.nowPlaying.collectAsStateWithLifecycle()
     val playbackNotice by vm.playbackNotice.collectAsStateWithLifecycle()
     val loginState by vm.loginState.collectAsStateWithLifecycle()
@@ -242,6 +292,8 @@ private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, onSet
     val searchAuthority by searchVm.authority.collectAsStateWithLifecycle()
 
     var tab by remember { mutableStateOf(Tab.Library) }
+    // A deep-linked invite (each one bumps focusDevice) opens the Device tab.
+    LaunchedEffect(focusDevice) { if (focusDevice > 0) tab = Tab.Device }
     val user = (loginState as? LoginUiState.Approved)?.user
 
     Scaffold(
@@ -291,6 +343,8 @@ private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, onSet
                 onForget = vm::forgetDevice,
                 onDone = { vm.useDeviceCredential(); tab = Tab.Library },
                 modifier = content,
+                parkedInvite = parkedInvite,
+                onDiscardParked = vm::discardParkedInvite,
             )
         }
     }

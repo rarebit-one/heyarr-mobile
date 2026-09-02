@@ -71,6 +71,15 @@ is the app's state machine over it). When Cruciform (the Voidbind authenticator 
 so it can foreground us) — no second-phone QR dance; the RP is still polled. (Contrast
 `allthing-android`, whose channel is push-approve — do **not** copy FCM/ntfy wiring.)
 
+The **reverse** handoff exists too (voidbind-kmp ADR-0006): Cruciform's "Add a device"
+on the same phone fires **`heyarr-mobile://pair?invite=<percent-encoded voidbind:pair
+tuple>`** (manifest filter; `device/PairDeepLink` routes it — pure Kotlin, unit-tested)
+into the SAME join path a scan takes (`PairInvite.check` → `AppViewModel.receiveInviteLink`
+→ `DevicePairing.begin`). An unprovisioned phone **parks** the invite (`parkedInvite`)
+and joins it automatically after "Create device key" — a link never triggers the
+fingerprint prompt by itself; a still-loading keyring continues when the read lands. The
+SAS is shown large with "switch back to Cruciform" copy; the confirm happens on Cruciform.
+
 ## voidbind-kmp is consumed as the published `voidbind-client` artifact
 
 `one.rarebit.voidbind:voidbind-client:0.5.0` from GitHub Packages (private; needs a
