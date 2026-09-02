@@ -3,7 +3,7 @@ package one.rarebit.heyarr.mobile.login
 import one.rarebit.voidbind.VoidbindDeepLink
 
 /**
- * Same-phone hand-off to the Voidbind authenticator app: instead of a second phone
+ * Same-phone hand-off to the Cruciform authenticator app: instead of a second phone
  * scanning a QR, the app fires an `ACTION_VIEW` intent carrying the very same
  * `voidbind:` URI the QR encodes, and the authenticator (which registers the
  * `voidbind` scheme) approves it in place. Pure URI construction; the Android intent

@@ -22,7 +22,7 @@ This is a **scaffold**: a buildable, tested foundation. Feature work lands as PR
   surface (`/api/v1/spaces/{id}/{keys,changes,snapshot}`). The **contract** this client builds
   against is `heyarr-core/docs/design/mobile-client.md` (+ ADR-0048 device auth, ADR-0049/0051
   personal state). Adding this client needs **no server change**.
-- **`rarebit-one/voidbind-kmp`** — THE Voidbind authenticator + the shared `voidbind-client`
+- **`rarebit-one/voidbind-kmp`** — THE Voidbind authenticator app (**Cruciform**, `one.rarebit.cruciform`) + the shared `voidbind-client`
   (`WebLoginClient`, `LoginQr`, `WebLogin`, `LoginApproval`). This app is a *consumption
   client* that delegates login approval to that authenticator.
 
@@ -49,7 +49,7 @@ This is a **scaffold**: a buildable, tested foundation. Feature work lands as PR
 Per the plan's DECISIONS LOG: **heyarr login channel = QR**. The app is the RP/initiator
 (`POST /login` → render the `voidbind:login?rp=&id=` tuple as a QR → poll `GET /login/{id}`
 → Bearer token), driven through voidbind-client's `WebLoginClient` (`login/QrLoginClient`
-is the app's state machine over it). When the Voidbind authenticator is installed on the
+is the app's state machine over it). When Cruciform (the Voidbind authenticator app) is installed on the
 **same phone**, an "Approve on this phone" button fires the identical tuple as an
 `ACTION_VIEW` intent (`login/VoidbindHandoff`, with a `callback=heyarr-mobile://login`
 so it can foreground us) — no second-phone QR dance; the RP is still polled. (Contrast
@@ -57,7 +57,7 @@ so it can foreground us) — no second-phone QR dance; the RP is still polled. (
 
 ## voidbind-kmp is consumed as the published `voidbind-client` artifact
 
-`one.rarebit.voidbind:voidbind-client:0.2.0` from GitHub Packages (private; needs a
+`one.rarebit.voidbind:voidbind-client:0.2.1` from GitHub Packages (private; needs a
 `read:packages` token — `settings.gradle.kts` reads `gpr.user`/`gpr.token` gradle
 properties or `GITHUB_ACTOR`/`GITHUB_TOKEN`; CI passes its own token). The library's
 minSdk is 33, so ours is too. **Do not re-derive any Voidbind wire format here** —
@@ -77,8 +77,8 @@ the stored cert. `device/EnrolScreen` + `AppViewModel` run voidbind-client's
 `HeyarrConfig.effectiveRelayBase` (default `<baseUrl>/pair` — voidbind-client's `RelayClient`
 appends the voidbind-go relay wire itself, `POST {base}/v1/sessions`, `PUT|GET
 {base}/v1/sessions/{id}/{role}/{type}`, landing on heyarr-core's `/pair/v1/...` mount, #421/ADR-0066), shows the
-`voidbind:pair?…` invite as a QR **and** an "Open in Voidbind" hand-off, waits for the
-authorising side (the Voidbind app on the same phone, or `voidbind pair-initiate` on a
+`voidbind:pair?…` invite as a QR **and** an "Open in Cruciform" hand-off, waits for the
+authorising side (the Cruciform app on the same phone, or `voidbind pair-initiate` on a
 machine holding the user identity), shows the 7-digit SAS, and on "codes match" receives
 the sealed cert. It can also **join** an invite the other side created — the Mac's
 `voidbind pair-initiate` QR **scanned with the camera** (`device/QrScanner`: CameraX +

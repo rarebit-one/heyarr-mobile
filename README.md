@@ -24,13 +24,13 @@ This is a **scaffold** — a buildable, tested foundation, not a finished app.
   `heyarr-core/docs/design/mobile-client.md` (device auth ADR-0048, personal state
   ADR-0049/0051). **No server change is needed** to add this client.
 - **[`rarebit-one/voidbind-kmp`](https://github.com/rarebit-one/voidbind-kmp)** — THE Voidbind
-  authenticator + the shared `voidbind-client` (`WebLoginClient`, `LoginQr`, `WebLogin`,
+  authenticator app (**Cruciform**, `one.rarebit.cruciform`) + the shared `voidbind-client` (`WebLoginClient`, `LoginQr`, `WebLogin`,
   `LoginApproval`). This app delegates login approval to that authenticator.
 
 ### voidbind-kmp consumption
 
 This app depends on the **published** shared client,
-`one.rarebit.voidbind:voidbind-client:0.2.0` (GitHub Packages, private — a token with
+`one.rarebit.voidbind:voidbind-client:0.2.1` (GitHub Packages, private — a token with
 `read:packages` is required even for a same-org read). `settings.gradle.kts` reads
 `gpr.user` / `gpr.token` from `~/.gradle/gradle.properties`, or `GITHUB_ACTOR` /
 `GITHUB_TOKEN` from the environment; CI passes its own workflow token. Locally:

@@ -47,7 +47,7 @@ fun LoginScreen(
     state: LoginUiState,
     onSignIn: () -> Unit,
     /**
-     * Same-phone hand-off: when the Voidbind authenticator is installed here, fire the
+     * Same-phone hand-off: when the Cruciform authenticator app is installed here, fire the
      * login tuple at it as an `ACTION_VIEW` intent (no second-phone QR dance). Null
      * hides the button — the QR is always there as the fallback.
      */
@@ -63,7 +63,7 @@ fun LoginScreen(
     ) {
         Text("heyarr", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Sign in with Voidbind — scan the code with your authenticator.",
+            "Sign in with Cruciform — scan the code or approve on this phone.",
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
@@ -78,7 +78,7 @@ fun LoginScreen(
                         modifier = Modifier.padding(bottom = 16.dp),
                     )
                 }
-                Button(onClick = onSignIn) { Text("Sign in with Voidbind") }
+                Button(onClick = onSignIn) { Text("Sign in with Cruciform") }
                 if (onEnrolDevice != null) {
                     TextButton(onClick = onEnrolDevice, modifier = Modifier.padding(top = 8.dp)) {
                         Text("Enrol this device instead")

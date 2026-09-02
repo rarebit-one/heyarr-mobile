@@ -76,7 +76,7 @@ sealed interface EnrolUiState {
  * The "Enrol this device" screen. This phone is the **new device** — voidbind-client's
  * `DevicePairing`, the relay *responder*: it shows its device key + honest hardware
  * tier, opens a relay session and renders the `voidbind:pair?…` invite (as a QR, and
- * as an "Open in Voidbind" hand-off to the authenticator on this same phone), runs the
+ * as an "Open in Cruciform" hand-off to the authenticator app on this same phone), runs the
  * commit-before-reveal handshake once the authorising side joins, shows the SAS for
  * the human to compare, and — only after they match — receives the user-signed
  * enrolment cert sealed to this device's X25519 key. An invite the *other* side
@@ -142,7 +142,7 @@ fun EnrolScreen(
                 Text("Pair with your identity", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Start pairing here, then approve it from a device that holds your Voidbind " +
-                        "identity — the Voidbind app on this phone, or `voidbind pair-initiate` on your Mac.",
+                        "identity — the Cruciform app on this phone, or `voidbind pair-initiate` on your Mac.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(onClick = onStartPairing) { Text("Start pairing") }
@@ -165,7 +165,7 @@ fun EnrolScreen(
             is EnrolUiState.Inviting -> {
                 Text("Waiting for the authorising device…", style = MaterialTheme.typography.titleMedium)
                 if (onOpenInVoidbind != null) {
-                    Button(onClick = { onOpenInVoidbind(state.inviteQr) }) { Text("Open in Voidbind") }
+                    Button(onClick = { onOpenInVoidbind(state.inviteQr) }) { Text("Open in Cruciform") }
                     Text("…or scan this invite from the authorising device:", style = MaterialTheme.typography.bodySmall)
                 } else {
                     Text("Scan this invite from the authorising device:", style = MaterialTheme.typography.bodySmall)
@@ -179,7 +179,7 @@ fun EnrolScreen(
             is EnrolUiState.CompareSas -> {
                 Text("Compare the security code", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "The Mac's terminal (or the Voidbind app) is showing a code too.",
+                    "The Mac's terminal (or Cruciform) is showing a code too.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 SasCard(state.sas)
