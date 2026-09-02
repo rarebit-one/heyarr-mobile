@@ -2,16 +2,17 @@ package one.rarebit.heyarr.mobile.library
 
 /**
  * A library entry as browsed from heyarr's native resources API
- * (`GET /api/v1/works`). Deliberately a thin projection — id, a display title, and a
- * kind — of the far richer server model (§ works/editions/assets). The scaffold's
- * job is to prove the browse list is wired to the contract, not to model the whole
- * catalog.
+ * (`GET /api/v1/works`, `GET /api/v1/works/{id}` — heyarr-core `Work`). A thin
+ * projection — id, a display title, a kind, a year, the normalised [workKey] and the
+ * server timestamps (which drive the settings-free "recent first" order) — of the far
+ * richer server model (§ works/editions/assets). The work's assets, wants and
+ * followed source are loaded separately by the detail screen ([WorkDetailClient]).
  *
  * [blobHash] / [mime] are the OPTIONAL playback handles: when a browse row carries a
  * primary asset's content hash, the M10 player can stream it directly
- * (`/api/v1/blobs/{hash}/content`) — that is the "tap → it plays" path. When absent
- * (a work whose row does not inline an asset), playback resolves through the
- * enrolment-gated plan negotiation instead — see `playback/PlaybackClient`.
+ * (`/api/v1/blobs/{hash}/content`) — that is the "tap → it plays" path. The live
+ * `Work` view does not inline one, so the detail screen's asset list is where Play
+ * actually lives; the row keeps the handle for a server that does inline it.
  */
 data class Work(
     val id: String,
@@ -21,7 +22,17 @@ data class Work(
     val blobHash: String? = null,
     /** The primary asset's MIME, when known — drives video-vs-audio and the container hint. */
     val mime: String? = null,
+    val year: Int? = null,
+    /** heyarr's normalised identity (`work_key`), so a rescan converges on the same work. */
+    val workKey: String? = null,
+    val sortTitle: String? = null,
+    /** RFC 3339 server timestamps, as sent; parsed only for ordering/display. */
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
 ) {
     /** True when this row can be streamed directly (the player has a hash to point at). */
     val isPlayable: Boolean get() = !blobHash.isNullOrBlank()
+
+    /** The timestamp "recent first" orders on: last touched, else created. */
+    val recency: String? get() = updatedAt ?: createdAt
 }

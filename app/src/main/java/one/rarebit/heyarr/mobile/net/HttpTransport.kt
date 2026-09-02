@@ -29,4 +29,11 @@ interface HttpTransport {
      */
     fun delete(url: String, headers: Map<String, String> = emptyMap()): HttpResponse =
         HttpResponse(405, "")
+
+    /**
+     * PATCH — needed by the want update route (`PATCH /api/v1/desired/{id}`, e.g. to
+     * pause/resume monitoring). Defaulted to a `405` for the same reason as [delete].
+     */
+    fun patch(url: String, body: String? = null, contentType: String? = null, headers: Map<String, String> = emptyMap()): HttpResponse =
+        HttpResponse(405, "")
 }

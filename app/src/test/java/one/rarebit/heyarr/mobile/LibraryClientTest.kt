@@ -30,7 +30,8 @@ class LibraryClientTest {
         val t = CapturingTransport("""[{"id":"w1","title":"Dune"}]""")
         val client = LibraryClient(t, "https://h.example", Credential.Session("tok-123"))
         val works = client.listWorks()
-        assertEquals("https://h.example/api/v1/works", t.lastUrl)
+        // The list is paged at the server max (a homelab library fits one page).
+        assertEquals("https://h.example/api/v1/works?limit=200", t.lastUrl)
         assertEquals("Bearer tok-123", t.lastAuth)
         assertEquals(1, works.size)
         assertEquals("Dune", works[0].title)

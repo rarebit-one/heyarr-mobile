@@ -1,17 +1,19 @@
 package one.rarebit.heyarr.mobile.library
 
-import one.rarebit.heyarr.mobile.net.JsonEscapes
+import one.rarebit.heyarr.mobile.net.JsonScan
 
 /**
- * A minimal, dependency-free parser for heyarr's `GET /api/v1/works` list body,
- * kept JVM-testable (no org.json, which is stubbed in unit tests) for the same
- * reason as the login `MiniJson`.
+ * A minimal, dependency-free parser for heyarr's `GET /api/v1/works` list body and
+ * the single `GET /api/v1/works/{id}` object, kept JVM-testable (no org.json, which
+ * is stubbed in unit tests) for the same reason as the login `MiniJson`.
  *
  * It is tolerant of the two envelope shapes a list endpoint may return — a bare
  * top-level array `[ {…}, {…} ]` or an object wrapping one under `items` / `works` /
- * `data` — and extracts, per element, an `id` and a display title (from `title`,
- * else `name`, else `sort_title`) plus an optional kind (`kind` / `type` /
- * `media_type`). Anything richer is intentionally dropped: this feeds a browse list.
+ * `data` (the live shape is `{ "items": [Work…], "next_cursor"? }`) — and extracts,
+ * per element, an `id` and a display title (from `title`, else `name`, else
+ * `sort_title`) plus an optional kind (`content_type` / `kind` / `type` /
+ * `media_type`), `year`, `work_key` and the two timestamps. Anything richer is
+ * intentionally dropped: this feeds a browse list and a detail header.
  *
  * This is a scaffold reader. When a shared, generated client (or kotlinx.serialization
  * against the published OpenAPI) lands, swap this for it.
@@ -19,110 +21,37 @@ import one.rarebit.heyarr.mobile.net.JsonEscapes
 object WorksJson {
 
     private val TITLE_KEYS = listOf("title", "name", "sort_title")
-    private val KIND_KEYS = listOf("kind", "type", "media_type")
+    private val KIND_KEYS = listOf("content_type", "kind", "type", "media_type")
     // Playback handles, tolerantly read when a browse row inlines a primary asset.
     private val HASH_KEYS = listOf("blob_hash", "content_hash", "hash")
-    private val MIME_KEYS = listOf("mime", "mime_type", "content_type")
+    private val MIME_KEYS = listOf("mime", "mime_type")
+    private val ENVELOPE_KEYS = listOf("items", "works", "data")
 
     /** Parse a works-list response body into [Work]s, skipping any element missing an id. */
-    fun parse(body: String): List<Work> {
-        val array = extractArray(body) ?: return emptyList()
-        return splitObjects(array).mapNotNull { obj ->
-            val id = firstString(obj, listOf("id")) ?: return@mapNotNull null
-            val title = firstString(obj, TITLE_KEYS) ?: id
-            Work(
-                id = id,
-                title = title,
-                kind = firstString(obj, KIND_KEYS),
-                blobHash = firstString(obj, HASH_KEYS),
-                mime = firstString(obj, MIME_KEYS),
-            )
-        }
-    }
+    fun parse(body: String): List<Work> =
+        JsonScan.objectsOf(body, ENVELOPE_KEYS).mapNotNull { parseObject(it) }
 
-    /** Return the `[ … ]` slice: the whole body if it's an array, else the array under a known key. */
-    private fun extractArray(body: String): String? {
-        val trimmed = body.trim()
-        if (trimmed.startsWith("[")) return sliceBalanced(trimmed, 0, '[', ']')
-        for (key in listOf("items", "works", "data")) {
-            val at = trimmed.indexOf("\"$key\"")
-            if (at < 0) continue
-            val open = trimmed.indexOf('[', at)
-            if (open < 0) continue
-            return sliceBalanced(trimmed, open, '[', ']')
-        }
-        return null
-    }
+    /** Parse one `Work` object body (`GET /works/{id}`), or null if it has no id. */
+    fun parseOne(body: String): Work? = JsonScan.rootObject(body)?.let { parseObject(it) }
 
-    /** Split a `[ {…}, {…} ]` array body into its top-level object substrings. */
-    private fun splitObjects(array: String): List<String> {
-        val out = ArrayList<String>()
-        var i = 0
-        while (i < array.length) {
-            if (array[i] == '{') {
-                val obj = sliceBalanced(array, i, '{', '}') ?: break
-                out.add(obj)
-                i += obj.length
-            } else {
-                i++
-            }
-        }
-        return out
-    }
+    /** The page's `next_cursor`, when the server says there is another page. */
+    fun nextCursor(body: String): String? =
+        JsonScan.rootObject(body)?.let { JsonScan.stringField(it, "next_cursor") }?.takeIf { it.isNotBlank() }
 
-    /** The first present, non-null top-level string field among [keys], or null. */
-    private fun firstString(obj: String, keys: List<String>): String? {
-        for (k in keys) stringField(obj, k)?.let { return it }
-        return null
-    }
-
-    /**
-     * Slice a brace/bracket-balanced substring starting at [start] (which must be
-     * [open]), respecting string literals and escapes. Returns null if unbalanced.
-     */
-    private fun sliceBalanced(s: String, start: Int, open: Char, close: Char): String? {
-        var depth = 0
-        var inStr = false
-        var i = start
-        while (i < s.length) {
-            val c = s[i]
-            if (inStr) {
-                if (c == '\\') { i += 2; continue }
-                if (c == '"') inStr = false
-            } else {
-                when (c) {
-                    '"' -> inStr = true
-                    open -> depth++
-                    close -> { depth--; if (depth == 0) return s.substring(start, i + 1) }
-                }
-            }
-            i++
-        }
-        return null
-    }
-
-    /** Top-level string field reader (same escape handling as login/MiniJson). */
-    private fun stringField(json: String, key: String): String? {
-        val needle = "\"$key\""
-        var i = json.indexOf(needle)
-        if (i < 0) return null
-        i += needle.length
-        while (i < json.length && (json[i] == ' ' || json[i] == '\t' || json[i] == ':')) i++
-        if (i >= json.length) return null
-        if (json.startsWith("null", i)) return null
-        if (json[i] != '"') return null
-        i++
-        val sb = StringBuilder()
-        while (i < json.length) {
-            val c = json[i]
-            when {
-                c == '\\' && i + 1 < json.length -> {
-                    i = JsonEscapes.append(sb, json, i)
-                }
-                c == '"' -> return sb.toString()
-                else -> { sb.append(c); i++ }
-            }
-        }
-        return null
+    private fun parseObject(obj: String): Work? {
+        val id = JsonScan.stringField(obj, "id") ?: return null
+        val title = JsonScan.firstString(obj, TITLE_KEYS) ?: id
+        return Work(
+            id = id,
+            title = title,
+            kind = JsonScan.firstString(obj, KIND_KEYS),
+            blobHash = JsonScan.firstString(obj, HASH_KEYS),
+            mime = JsonScan.firstString(obj, MIME_KEYS),
+            year = JsonScan.intField(obj, "year"),
+            workKey = JsonScan.stringField(obj, "work_key"),
+            sortTitle = JsonScan.stringField(obj, "sort_title"),
+            createdAt = JsonScan.stringField(obj, "created_at"),
+            updatedAt = JsonScan.stringField(obj, "updated_at"),
+        )
     }
 }

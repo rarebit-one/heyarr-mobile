@@ -59,6 +59,9 @@ class DeviceAuthTransport(
     override fun delete(url: String, headers: Map<String, String>): HttpResponse =
         withDeviceAuth(headers) { inner.delete(url, it) }
 
+    override fun patch(url: String, body: String?, contentType: String?, headers: Map<String, String>): HttpResponse =
+        withDeviceAuth(headers) { inner.patch(url, body, contentType, it) }
+
     private inline fun withDeviceAuth(headers: Map<String, String>, send: (Map<String, String>) -> HttpResponse): HttpResponse {
         val cred = credential()
         if (cred == null || !DeviceCredential.isDeviceHeader(headers[Credential.HEADER])) return send(headers)

@@ -20,6 +20,7 @@ import one.rarebit.heyarr.mobile.device.PairInvite
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.LibraryUiState
 import one.rarebit.heyarr.mobile.library.Work
+import one.rarebit.heyarr.mobile.library.WorkAsset
 import one.rarebit.heyarr.mobile.login.LoginUiState
 import one.rarebit.heyarr.mobile.login.QrLoginClient
 import one.rarebit.heyarr.mobile.login.VoidbindLogin
@@ -100,6 +101,10 @@ class AppViewModel(
 
     private val _libraryState = MutableStateFlow<LibraryUiState>(LibraryUiState.Loading)
     val libraryState: StateFlow<LibraryUiState> = _libraryState.asStateFlow()
+
+    /** True while a pull-to-refresh reload of the library is in flight (the list stays shown). */
+    private val _libraryRefreshing = MutableStateFlow(false)
+    val libraryRefreshing: StateFlow<Boolean> = _libraryRefreshing.asStateFlow()
 
     private val _nowPlaying = MutableStateFlow<NowPlaying?>(null)
     val nowPlaying: StateFlow<NowPlaying?> = _nowPlaying.asStateFlow()
@@ -577,6 +582,23 @@ class AppViewModel(
         _nowPlaying.value = NowPlaying(target = target, title = work.title)
     }
 
+    /**
+     * Play one of a work's files from the detail screen: the asset's own blob hash and
+     * MIME drive the stream target (the M10 direct path over `/blobs/{hash}/content`).
+     */
+    fun playAsset(work: Work, asset: WorkAsset) {
+        val cred = credential ?: return
+        val hash = asset.blobHash
+        if (hash.isNullOrBlank()) {
+            _playbackNotice.value = "“${asset.filename ?: work.title}” has no blob to stream (a linked asset has none)."
+            return
+        }
+        val mime = asset.mime ?: work.mime
+        val isVideo = PlaybackTarget.looksLikeVideo(mime, work.kind)
+        val target = PlaybackClient(transport, config.baseUrl, cred).blobTarget(hash, isVideo, mime)
+        _nowPlaying.value = NowPlaying(target = target, title = asset.filename?.let { "${work.title} — $it" } ?: work.title)
+    }
+
     /** Close the player and release its target. */
     fun stopPlayback() {
         _nowPlaying.value = null
@@ -587,9 +609,13 @@ class AppViewModel(
         _playbackNotice.value = null
     }
 
-    private fun loadLibrary() {
+    /** Pull-to-refresh: reload the library, keeping the current list on screen meanwhile. */
+    fun refreshLibrary() = loadLibrary(keepShowing = true)
+
+    private fun loadLibrary(keepShowing: Boolean = false) {
         val cred = credential ?: return
-        _libraryState.value = LibraryUiState.Loading
+        if (!keepShowing || _libraryState.value !is LibraryUiState.Loaded) _libraryState.value = LibraryUiState.Loading
+        _libraryRefreshing.value = true
         viewModelScope.launch {
             val state = withContext(Dispatchers.IO) {
                 runCatching {
@@ -598,6 +624,7 @@ class AppViewModel(
                 }.getOrElse { LibraryUiState.Error(it.message ?: "failed to load library") }
             }
             _libraryState.value = state
+            _libraryRefreshing.value = false
         }
     }
 }
