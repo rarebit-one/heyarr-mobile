@@ -47,8 +47,15 @@ This is a **scaffold**: a buildable, tested foundation. Feature work lands as PR
   explicitly as `reuseForSeconds`) so the biometric cadence is one prompt an hour;
   `net/DeviceAuthTransport` drives `DeviceAuthPolicy.execute` — refresh + retry **once**
   on a 401 (heyarr's Device refusals are all an undifferentiated 401) — and owns the
-  `Voidbind-Membership` header seam (`MEMBERSHIP_HEADER`, provider-fed, **empty until
-  voidbind-go v0.9.0's membership ops land**).
+  `Voidbind-Membership` header (`MEMBERSHIP_HEADER`): since voidbind-client **0.5.0**
+  (ADR-0005 / heyarr-core ADR-0068) the credential token is this device's **admitting
+  op** (a v3 membership op; a v1/v2 cert IS a genesis add and still works) and the
+  header carries the membership **ops** the device knows — `device/MembershipOps`
+  picks ≤ 64, the justifying closure of the device's own admission first. After a
+  401, BEFORE the retry, `AppViewModel.refreshMembership` re-reads
+  `GET /membership/{usr}` (`device/MembershipClient`, 404 tolerated), merges it into
+  the replica and evaluates; a device no longer a member drops its credential and
+  shows `EnrolUiState.Removed` — no retry, no loop.
 - **Bootstrap — `Authorization: Bearer <token>`** (`auth/Credential.Session`): a
   short-lived session token from a **QR** web-login, how a fresh install reaches the
   library before it enrols as a device.
@@ -66,41 +73,44 @@ so it can foreground us) — no second-phone QR dance; the RP is still polled. (
 
 ## voidbind-kmp is consumed as the published `voidbind-client` artifact
 
-`one.rarebit.voidbind:voidbind-client:0.4.0` from GitHub Packages (private; needs a
+`one.rarebit.voidbind:voidbind-client:0.5.0` from GitHub Packages (private; needs a
 `read:packages` token — `settings.gradle.kts` reads `gpr.user`/`gpr.token` gradle
 properties or `GITHUB_ACTOR`/`GITHUB_TOKEN`; CI passes its own token). The library's
 minSdk is 33, so ours is too. **Do not re-derive any Voidbind wire format here** —
 `LoginQr`, `Cert`, `Invite`, `DevicePairing`, `RelayClient`, `MiniJson`, `Base64Url`,
-and (since 0.4.0) the `Device`-scheme `auth/` trio — `PossessionProof`, `DeviceCredential`,
+(since 0.5.0) `MembershipOp` / `Membership.{evaluate,merge}` / `Admission`, and (since
+0.4.0) the `Device`-scheme `auth/` trio — `PossessionProof`, `DeviceCredential`,
 `DeviceAuthPolicy` — are the library's; the app keeps only the golden vectors. For a local
 composite build against an unpublished voidbind-kmp change, see the commented
 `includeBuild` in `settings.gradle.kts`.
 
-## Enrolment (device/) — this phone is the pairing RESPONDER
+## Enrolment (device/) — this phone is the NEW device, joining a member's invite
 
 `device/DeviceKeyring` owns the keys: the sealed Ed25519 signer (`DeviceKeyStore`, alias
 `heyarr-device`, biometric-gated via `device/BiometricGate` — hence `MainActivity` is a
 `FragmentActivity`), the X25519 enc key sealed at rest by `device/SealedSecretStore`, and
-the stored cert. `device/EnrolScreen` + `AppViewModel` run voidbind-client's
-`DevicePairing` (the **new** device / relay responder): this phone opens a relay session on
-`HeyarrConfig.effectiveRelayBase` (default `<baseUrl>/pair` — voidbind-client's `RelayClient`
-appends the voidbind-go relay wire itself, `POST {base}/v1/sessions`, `PUT|GET
-{base}/v1/sessions/{id}/{role}/{type}`, landing on heyarr-core's `/pair/v1/...` mount, #421/ADR-0066), shows the
-`voidbind:pair?…` invite as a QR **and** an "Open in Cruciform" hand-off, waits for the
-authorising side (the Cruciform app on the same phone, or `voidbind pair-initiate` on a
-machine holding the user identity), shows the 7-digit SAS, and on "codes match" receives
-the sealed cert. It can also **join** an invite the other side created — the Mac's
-`voidbind pair-initiate` QR **scanned with the camera** (`device/QrScanner`: CameraX +
-ML Kit, the same stack as voidbind-kmp's androidApp; CAMERA runtime permission) or
-pasted — gated by `device/PairInvite` (the library's `Invite.decode`, never a re-derived
-parser; non-invites are refused with a reason and the scanner keeps looking). Then
-`device/EnrolClient` tries `POST /enrol {cert, proof, name}` (planned self-enrol) and,
-if absent, `POST /api/v1/identities/devices` (admin) — surfacing the cert for an operator
-when neither works, never pretending. **Known server gaps:** heyarr-core's legacy
-`/pair/sessions/{s}/slots/{slot}` relay speaks heyarr's OLD pairflow (not usable by
-`DevicePairing`); a device is read-scoped on current `main` until heyarr-core #417 lands
-and an admin grants its key (`POST /api/v1/session/management-grants {device_key}`);
-`POST /api/v1/devices` is a playback profile, not identity.
+the stored **admission** — `cert.<alias>.token` (the admitting op = credential token) plus
+`ops.<alias>.json` (the replica; `knownOps()` always folds the own op back in). Under
+voidbind-client 0.5.0 (ADR-0005) a pairing invite is **v3** — `voidbind:pair?v=3&…&usr=` —
+and only a *member* device can mint one (the responder judges the initiator's membership
+under `usr` before any SAS exists), so this phone never opens the relay session itself:
+`device/EnrolScreen` + `AppViewModel.joinPairing` **join** the invite Cruciform's "Add a
+device" (another phone) or the Mac's `voidbind pair-initiate` rendered — **scanned with the
+camera** (`device/QrScanner`: CameraX + ML Kit, the same stack as voidbind-kmp's
+androidApp; CAMERA runtime permission) or pasted — gated by `device/PairInvite` (the
+library's `Invite.decode`, never a re-derived parser; non-invites are refused with a reason
+and the scanner keeps looking). `DevicePairing(http, identity, clock)` runs the handshake,
+the screen shows the 7-digit SAS, and on "codes match" `confirm` yields an
+`Admission{op, ops}` — **both persisted** (`DeviceKeyring.saveAdmission`). Then
+`device/EnrolClient` posts `POST /enrol {cert: <op>, proof, name, ops}` (heyarr-core
+ADR-0067/0068 — `ops` = `MembershipOps.presentable`; a node that still refuses the field
+with a 400 is retried once without it) and, if the route is absent,
+`POST /api/v1/identities/devices` (admin) — surfacing the op for an operator when neither
+works, never pretending. **Known server gaps:** `POST /enrol` taking `ops`
+and `GET /membership/{usr}` are heyarr-core PR #426 (ADR-0068) — until it merges the
+app's fallbacks (retry without `ops`; 404 = nothing learned) carry it; a device is
+read-scoped until an admin grants its key (`POST /api/v1/session/management-grants
+{device_key}`, ADR-0065); `POST /api/v1/devices` is a playback profile, not identity.
 
 ## Personal state is opaque; decrypt happens ONLY on-device
 
@@ -118,15 +128,16 @@ app/src/main/java/one/rarebit/heyarr/mobile/
   MainActivity.kt · AppViewModel.kt · HeyarrConfig.kt (BuildConfig default → Settings override)
   settings/     SettingsStore (SharedPreferences; in-memory for tests) + SettingsScreen
   auth/         Credential (Device/Session header snapshot — Device renders via the library)
-  device/       DeviceKeyring (sealed keys + cert) · BiometricGate · SealedSecretStore ·
-                EnrolScreen + EnrolClient (pairing responder, registration) · HandoffLauncher
+  device/       DeviceKeyring (sealed keys + admission: op + ops) · BiometricGate · SealedSecretStore ·
+                EnrolScreen + EnrolClient (join a v3 invite, register with ops) · MembershipOps
+                (what to present, ≤ 64) · MembershipClient (GET /membership/{usr}) · HandoffLauncher
   login/        QR login over voidbind-client (LoginTuple façade, QrLoginClient, VoidbindHandoff, screen)
   library/      LibraryClient (native /api/v1/works) + WorksJson + SubsonicClient stub + screen
   playback/     PlaybackClient (blob-stream target + /playback/plan) + Media3 player
                 (HeyarrDataSource auth+Range data source, PlayerScreen, PlaybackTarget/Json)
   personalstate/ PersonalStateClient (opaque spaces sync) + Unwrapper (decrypt-on-device seam)
   net/          HttpTransport + OkHttp actual · DeviceAuthTransport (library DeviceAuthPolicy
-                re-mint/retry + Voidbind-Membership seam) ·
+                re-mint/retry, Voidbind-Membership header, onUnauthorized veto) ·
                 OkHttpVoidbindTransport (voidbind-client's seam) · JsonEscapes
 app/src/test/…  pure-JVM unit tests (no Android runtime)
 .github/workflows/android.yml   CI: testDebugUnitTest + assembleDebug on ubuntu-latest

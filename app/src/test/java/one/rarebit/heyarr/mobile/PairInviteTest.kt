@@ -15,7 +15,9 @@ class PairInviteTest {
     private val relay = "http://192.168.16.224:7777/pair"
     private val session = "s3ss10n"
     private val salt = ByteArray(16) { it.toByte() }
-    private val invite = Invite.encode(relay, session, salt)
+    /** The identity (genesis key) a v3 invite names — what the responder judges membership under. */
+    private val usr = "ed25519:" + "ab".repeat(32)
+    private val invite = Invite.encode(relay, session, salt, usr)
 
     private fun invalid(raw: String): String {
         val r = PairInvite.check(raw)
@@ -31,6 +33,7 @@ class PairInviteTest {
         assertEquals(invite, r.inviteQr)
         assertEquals(relay, r.relay)
         assertEquals(session, r.session)
+        assertEquals(usr, r.user)
     }
 
     @Test
@@ -43,11 +46,12 @@ class PairInviteTest {
     @Test
     fun `key order does not matter - a Go-rendered invite parses too`() {
         val goStyle = "voidbind:pair?relay=http%3A%2F%2Fmac.local%3A8788&salt=" +
-            "000102030405060708090a0b0c0d0e0f&session=abc&v=2"
+            "000102030405060708090a0b0c0d0e0f&session=abc&usr=ed25519%3A" + "cd".repeat(32) + "&v=3"
         val r = PairInvite.check(goStyle)
         assertTrue("$r", r is PairInvite.Valid)
         assertEquals("http://mac.local:8788", (r as PairInvite.Valid).relay)
         assertEquals("abc", r.session)
+        assertEquals("ed25519:" + "cd".repeat(32), r.user)
     }
 
     @Test
@@ -68,7 +72,8 @@ class PairInviteTest {
         val msg = invalid("https://example.com/menu")
         assertTrue(msg, msg.contains("Not a Voidbind pairing invite"))
         assertTrue(msg, msg.contains("https://example.com/menu"))
-        assertTrue(msg, msg.contains("voidbind:pair?v=2"))
+        assertTrue(msg, msg.contains("voidbind:pair?v=3"))
+        assertTrue(msg, msg.contains("usr="))
     }
 
     @Test
@@ -80,23 +85,24 @@ class PairInviteTest {
     }
 
     @Test
-    fun `wrong version, short salt and missing session are the parser's refusals`() {
-        val v1 = invite.replace("v=2", "v=1")
-        assertTrue(invalid(v1).contains("version"))
+    fun `wrong version, short salt, missing session and missing usr are the parser's refusals`() {
+        val v2 = invite.replace("v=3", "v=2") // a pre-ADR-0005 invite names no identity
+        assertTrue(invalid(v2).contains("version"))
 
-        val shortSalt = Invite.encode(relay, session, salt).replace(
-            "salt=000102030405060708090a0b0c0d0e0f", "salt=0001",
-        )
+        val shortSalt = invite.replace("salt=000102030405060708090a0b0c0d0e0f", "salt=0001")
         assertTrue(invalid(shortSalt).contains("salt"))
 
-        val noSession = "voidbind:pair?v=2&relay=http%3A%2F%2Fr&salt=000102030405060708090a0b0c0d0e0f"
+        val noSession = "voidbind:pair?v=3&relay=http%3A%2F%2Fr&salt=000102030405060708090a0b0c0d0e0f&usr=$usr"
         assertTrue(invalid(noSession).contains("session"))
+
+        val noUser = "voidbind:pair?v=3&relay=http%3A%2F%2Fr&salt=000102030405060708090a0b0c0d0e0f&session=a"
+        assertTrue(invalid(noUser).contains("user"))
     }
 
     @Test
     fun `a truncated or garbled tuple is a malformed invite, not a crash`() {
-        val msg = invalid("voidbind:pair?v=2&relay=http%3A%2F%2Fr&session=a&salt=zz")
+        val msg = invalid("voidbind:pair?v=3&relay=http%3A%2F%2Fr&session=a&salt=zz&usr=$usr")
         assertTrue(msg, msg.startsWith("Malformed pairing invite"))
-        invalid("voidbind:pair?v=2&relay=%2")
+        invalid("voidbind:pair?v=3&relay=%2")
     }
 }

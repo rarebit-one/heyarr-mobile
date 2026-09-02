@@ -107,11 +107,7 @@ class MainActivity : FragmentActivity() {
                         EnrolScreen(
                             state = enrolState,
                             onCreateKey = vm::provisionDevice,
-                            onStartPairing = vm::startPairing,
                             onJoinInvite = vm::joinPairing,
-                            onOpenInVoidbind = if (voidbindInstalled) {
-                                { invite -> HandoffLauncher.open(context, VoidbindHandoff.pairUri(invite)) }
-                            } else null,
                             onSasMatches = vm::confirmSas,
                             onSasMismatch = vm::rejectSas,
                             onRetry = vm::retryEnrol,
@@ -288,11 +284,7 @@ private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, onSet
             Tab.Device -> EnrolScreen(
                 state = enrolState,
                 onCreateKey = vm::provisionDevice,
-                onStartPairing = vm::startPairing,
                 onJoinInvite = vm::joinPairing,
-                onOpenInVoidbind = if (voidbindInstalled) {
-                    { invite -> HandoffLauncher.open(context, VoidbindHandoff.pairUri(invite)) }
-                } else null,
                 onSasMatches = vm::confirmSas,
                 onSasMismatch = vm::rejectSas,
                 onRetry = vm::retryEnrol,

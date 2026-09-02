@@ -14,6 +14,8 @@ import one.rarebit.heyarr.mobile.device.DeviceKeyInfo
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
 import one.rarebit.heyarr.mobile.device.EnrolClient
 import one.rarebit.heyarr.mobile.device.EnrolUiState
+import one.rarebit.heyarr.mobile.device.MembershipClient
+import one.rarebit.heyarr.mobile.device.MembershipOps
 import one.rarebit.heyarr.mobile.device.PairInvite
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.LibraryUiState
@@ -31,13 +33,12 @@ import one.rarebit.heyarr.mobile.search.SessionAuthority
 import one.rarebit.heyarr.mobile.search.SessionClient
 import one.rarebit.heyarr.mobile.settings.InMemorySettingsStore
 import one.rarebit.heyarr.mobile.settings.SettingsStore
-import one.rarebit.voidbind.Invite
+import one.rarebit.voidbind.Membership
+import one.rarebit.voidbind.MembershipOp
 import one.rarebit.voidbind.auth.DeviceCredential
 import one.rarebit.voidbind.auth.PossessionProof
 import one.rarebit.voidbind.flow.DevicePairing
-import one.rarebit.voidbind.net.RelayClient
 import one.rarebit.voidbind.net.HttpTransport as VoidbindHttpTransport
-import java.security.SecureRandom
 
 /** A resolved item the player is showing: its stream target and a display title. */
 data class NowPlaying(val target: PlaybackTarget, val title: String)
@@ -68,12 +69,22 @@ class AppViewModel(
     @Volatile
     private var deviceCredential: DeviceCredential? = null
 
+    /** The raw transport — what the public, unauthenticated membership read uses. */
+    private val rawTransport: HttpTransport = OkHttpTransport()
+
     /**
      * The app's transport: every `/api/v1` request an enrolled device makes goes through
-     * [DeviceAuthTransport], which keeps the `Device` credential fresh and re-mints +
-     * retries once on a 401 (mobile-client constraint 2).
+     * [DeviceAuthTransport], which keeps the `Device` credential fresh, presents the
+     * membership ops this device knows (`Voidbind-Membership`, ADR-0005) and re-mints +
+     * retries once on a 401 (mobile-client constraint 2) — after [refreshMembership]
+     * has had its say: a device that learns it was removed does not retry.
      */
-    val transport: HttpTransport = DeviceAuthTransport(OkHttpTransport(), { deviceCredential })
+    val transport: HttpTransport = DeviceAuthTransport(
+        rawTransport,
+        credential = { deviceCredential },
+        membership = { keyring?.let { MembershipOps.headerValue(it.knownOps(), it.certToken()) } },
+        onUnauthorized = ::refreshMembership,
+    )
 
     /** Shared OkHttp client for the Media3 blob-stream data source. */
     val httpClient: OkHttpClient = OkHttpClient()
@@ -203,6 +214,8 @@ class AppViewModel(
     private var pairing: DevicePairing? = null
     private var handshake: DevicePairing.Handshake? = null
 
+    private fun nowSeconds(): Long = System.currentTimeMillis() / 1000
+
     /**
      * Attach the phone's [DeviceKeyring] (needs an Activity for the biometric prompt).
      * Reads the device keys — provisioning them on first run, which shows the prompt —
@@ -243,7 +256,7 @@ class AppViewModel(
         }
     }
 
-    /** Switch the app to the Device credential for [certToken]: mint a proof, load the library. */
+    /** Switch the app to the Device credential for [certToken] (the admitting op): mint a proof, load the library. */
     private suspend fun adoptDevice(ring: DeviceKeyring, certToken: String) {
         val adopted = withContext(Dispatchers.IO) {
             runCatching {
@@ -265,7 +278,7 @@ class AppViewModel(
             _loginState.value = LoginUiState.Approved(user = null)
             _enrolState.value = EnrolUiState.Enrolled(
                 info = _deviceInfo.value ?: withContext(Dispatchers.IO) { ring.info() },
-                registration = "Signed in with this device's certificate.",
+                registration = "Signed in with this device's admission.",
                 needsAdmin = false,
             )
             loadSessionAuthority()
@@ -276,35 +289,12 @@ class AppViewModel(
     }
 
     /**
-     * This device opens a relay session on [HeyarrConfig.effectiveRelayBase] and shows
-     * the invite for the authorising side to take (QR, or the same-phone hand-off), then
-     * runs the responder handshake as soon as that side joins.
-     */
-    fun startPairing() {
-        val ring = keyring ?: return
-        val info = _deviceInfo.value ?: return
-        viewModelScope.launch {
-            val relay = config.effectiveRelayBase
-            val invite = withContext(Dispatchers.IO) {
-                runCatching {
-                    val session = RelayClient.createSession(voidbindTransport, relay)
-                    val salt = ByteArray(32).also { SecureRandom().nextBytes(it) }
-                    Invite.encode(relay, session, salt)
-                }
-            }.getOrElse {
-                _enrolState.value = EnrolUiState.Error(info, "could not open a pairing session on $relay: ${it.message}")
-                return@launch
-            }
-            _enrolState.value = EnrolUiState.Inviting(info, invite)
-            runHandshake(ring, info, invite)
-        }
-    }
-
-    /**
-     * Join a pairing the authorising side started — the `voidbind:pair?…` invite the Mac
-     * printed, scanned with the camera or pasted. Re-checked here through the library's
-     * parser ([PairInvite]) even though the screen already did, so a caller can never
-     * push a non-invite into the handshake.
+     * Join a pairing a member device started — the v3 `voidbind:pair?…` invite Cruciform
+     * or the Mac's `voidbind pair-initiate` rendered, scanned with the camera or pasted.
+     * (Under ADR-0005 only a member can mint an invite — it names the identity — so
+     * this phone, the NEW device, never opens the session itself.) Re-checked here
+     * through the library's parser ([PairInvite]) even though the screen already did,
+     * so a caller can never push a non-invite into the handshake.
      */
     fun joinPairing(inviteQr: String) {
         val ring = keyring ?: return
@@ -317,7 +307,7 @@ class AppViewModel(
             }
         }
         viewModelScope.launch {
-            _enrolState.value = EnrolUiState.Inviting(info, invite, joined = true)
+            _enrolState.value = EnrolUiState.Joining(info, invite)
             runHandshake(ring, info, invite)
         }
     }
@@ -325,7 +315,7 @@ class AppViewModel(
     private suspend fun runHandshake(ring: DeviceKeyring, info: DeviceKeyInfo, inviteQr: String) {
         val result = withContext(Dispatchers.IO) {
             runCatching {
-                val p = DevicePairing(voidbindTransport, ring.identity())
+                val p = DevicePairing(voidbindTransport, ring.identity(), clock = ::nowSeconds)
                 p to p.begin(inviteQr)
             }
         }
@@ -338,7 +328,12 @@ class AppViewModel(
         }
     }
 
-    /** The human saw the SAME code on both screens: receive the cert, store it, register, adopt. */
+    /**
+     * The human saw the SAME code on both screens: receive the admission — this
+     * device's add op plus the ops that authorise it — store BOTH (the op is the
+     * credential token, the ops the replica), register at the node presenting those
+     * ops, adopt.
+     */
     fun confirmSas() {
         val ring = keyring ?: return
         val p = pairing ?: return
@@ -348,11 +343,14 @@ class AppViewModel(
             _enrolState.value = EnrolUiState.Loading
             val outcome = withContext(Dispatchers.IO) {
                 runCatching {
-                    val cert = p.confirm(h)
-                    ring.saveCert(cert)
+                    val admission = p.confirm(h)
+                    ring.saveAdmission(admission)
                     val identity = ring.identity()
-                    val proof = PossessionProof.mint(cert, identity.asSigner(), System.currentTimeMillis() / 1000)
-                    EnrolClient(transport, config.baseUrl).register(cert, proof, deviceName, credential)
+                    val proof = PossessionProof.mint(admission.op, identity.asSigner(), nowSeconds())
+                    EnrolClient(rawTransport, config.baseUrl).register(
+                        admission.op, proof, deviceName, credential,
+                        ops = MembershipOps.presentable(ring.knownOps(), admission.op),
+                    )
                 }
             }
             pairing = null
@@ -363,7 +361,7 @@ class AppViewModel(
                 val (text, needsAdmin) = when (reg) {
                     is EnrolClient.Outcome.Registered -> "Registered with the node via ${reg.via}." to false
                     is EnrolClient.Outcome.NeedsAdmin ->
-                        ("The cert is stored, but the node does not know it yet (${reg.reason}). An admin " +
+                        ("The admission is stored, but the node does not know it yet (${reg.reason}). An admin " +
                             "must register it: POST /api/v1/identities/devices {\"cert\":…,\"name\":…}.") to true
                     is EnrolClient.Outcome.Failed -> "Registration failed: ${reg.message}" to true
                 }
@@ -386,8 +384,45 @@ class AppViewModel(
         handshake = null
         val info = _deviceInfo.value
         _enrolState.value = if (info == null) EnrolUiState.Unprovisioned else if (info.certToken != null) {
-            EnrolUiState.Enrolled(info, "This device holds a certificate.", false)
+            EnrolUiState.Enrolled(info, "This device holds an admission.", false)
         } else EnrolUiState.Ready(info)
+    }
+
+    /**
+     * After a `401` on a Device request, before the single re-mint + retry
+     * ([DeviceAuthTransport.onUnauthorized]): re-read the identity's membership from
+     * the node (`GET /membership/{usr}`, public; a node without it — 404 — teaches
+     * nothing and the retry goes ahead), merge it into this device's replica, and
+     * evaluate. A device the ops no longer find a member — another member removed
+     * it, or its add lapsed — drops its Device credential, moves to the honest
+     * [EnrolUiState.Removed] and returns `false`: the 401 stands and nothing loops.
+     * Runs on the transport's (IO) thread.
+     */
+    private fun refreshMembership(): Boolean {
+        val ring = keyring ?: return true
+        val own = ring.certToken() ?: return true
+        val usr = ring.userId() ?: return true
+        val remote = runCatching { MembershipClient(rawTransport, config.baseUrl).fetch(usr) }.getOrNull() ?: return true
+        val merged = Membership.merge(ring.knownOps(), remote)
+        runCatching { ring.saveOps(merged) }
+        val view = runCatching { Membership.evaluate(usr, merged, nowSeconds()) }.getOrNull() ?: return true
+        val self = runCatching { MembershipOp.verify(own).device }.getOrNull() ?: return true
+        if (view.isMember(self)) return true
+
+        val why = when {
+            self in view.removed -> "Another member of your identity removed this device."
+            view.rejected[MembershipOp.hash(own)]?.contains("expired") == true ||
+                view.ineffective[MembershipOp.hash(own)]?.contains("expired") == true ->
+                "This device's admission has expired."
+            else -> "This device is no longer a member of the identity " +
+                "(${view.rejected[MembershipOp.hash(own)] ?: view.ineffective[MembershipOp.hash(own)] ?: "not admitted"})."
+        }
+        deviceCredential = null
+        credential = null
+        _deviceInfo.value = runCatching { ring.info() }.getOrNull() ?: _deviceInfo.value
+        _enrolState.value = EnrolUiState.Removed(_deviceInfo.value ?: return false, why)
+        _loginState.value = LoginUiState.Error("This device was removed from your Voidbind identity. $why")
+        return false
     }
 
     /** After enrolment: start using the Device credential now. */
@@ -397,7 +432,7 @@ class AppViewModel(
         viewModelScope.launch { adoptDevice(ring, cert) }
     }
 
-    /** Drop the stored cert (keys stay) and fall back to QR login. */
+    /** Drop the stored admission (keys stay) and fall back to QR login. */
     fun forgetDevice() {
         val ring = keyring ?: return
         viewModelScope.launch {

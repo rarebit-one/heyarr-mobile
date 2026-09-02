@@ -122,6 +122,53 @@ class DeviceSessionTest {
         assertEquals("Voidbind-Membership", DeviceAuthTransport.MEMBERSHIP_HEADER)
     }
 
+    /**
+     * The membership hook runs after the first 401 and BEFORE the re-mint: the app uses
+     * it to re-read `GET /membership/{usr}`; a device that finds itself removed answers
+     * `false`, the 401 stands, and no biometric prompt (no second signature) is spent.
+     */
+    @Test fun onUnauthorizedRunsBeforeTheRefreshAndCanVetoTheRetry() {
+        val s = session({ 5L })
+        var calls = 0
+        var signsWhenCalled = -1
+        val inner = Scripted(401, 200)
+        val t = DeviceAuthTransport(inner, { s }, onUnauthorized = { calls++; signsWhenCalled = signs; false })
+        val resp = t.get("u", Credential.Device(cert, "x").asHeader())
+        assertEquals(401, resp.status)
+        assertEquals(1, inner.seen.size) // vetoed: no retry
+        assertEquals(1, calls)
+        assertEquals(1, signsWhenCalled) // only the first proof had been signed when the hook ran
+        assertEquals(1, signs) // and no re-mint followed
+    }
+
+    @Test fun onUnauthorizedTrueProceedsToTheSingleRetry() {
+        var now = 1_000_000L
+        val s = session({ now++ })
+        var calls = 0
+        val inner = Scripted(401, 401)
+        val resp = DeviceAuthTransport(inner, { s }, onUnauthorized = { calls++; true }).get("u", Credential.Device(cert, "x").asHeader())
+        assertEquals(401, resp.status)
+        assertEquals(2, inner.seen.size)
+        assertEquals(1, calls) // a second 401 is final — the hook is not consulted again
+        assertEquals(2, signs)
+    }
+
+    /** Ops learned inside the hook ride the retry: the membership header is re-read per attempt. */
+    @Test fun membershipHeaderIsReReadForTheRetry() {
+        var now = 1_000_000L
+        val s = session({ now++ })
+        var ops = "old.op"
+        val inner = Scripted(401, 200)
+        val t = DeviceAuthTransport(inner, { s }, membership = { ops }, onUnauthorized = { ops = "old.op,new.op"; true })
+        assertEquals(200, t.get("u", Credential.Device(cert, "x").asHeader()).status)
+        assertEquals("old.op", inner.seen[0][DeviceAuthTransport.MEMBERSHIP_HEADER])
+        assertEquals("old.op,new.op", inner.seen[1][DeviceAuthTransport.MEMBERSHIP_HEADER])
+    }
+
+    @Test fun membershipHeaderNameIsTheLibrarys() {
+        assertEquals(DeviceCredential.MEMBERSHIP_HEADER, DeviceAuthTransport.MEMBERSHIP_HEADER)
+    }
+
     @Test fun membershipHeaderRidesDeviceRequestsWhenProvided() {
         val inner = Scripted(401, 200, 200)
         val s = session({ 5L })
