@@ -1,5 +1,7 @@
 package one.rarebit.heyarr.mobile.auth
 
+import one.rarebit.voidbind.auth.DeviceCredential
+
 /**
  * The credential this client presents to heyarr on every `/api/v1` call.
  *
@@ -20,8 +22,10 @@ package one.rarebit.heyarr.mobile.auth
  *
  * Producing a [Device] proof needs the device private key, which on a phone lives
  * **non-exportable** in the Android Keystore / StrongBox and signs in-enclave — see
- * [DeviceCredential]. Formatting the header from an already-obtained cert+proof is
- * pure and unit-tested here; obtaining the proof is phone-gated.
+ * voidbind-client's [DeviceCredential] (the library owns the wire format: the `~`
+ * join, the `Device ` scheme and the possession proof). Formatting the header from
+ * an already-obtained cert+proof is pure and unit-tested; obtaining the proof is
+ * phone-gated.
  */
 sealed interface Credential {
 
@@ -35,7 +39,7 @@ sealed interface Credential {
 
     /** Primary: an enrolled device's cert + possession proof under the `Device` scheme. */
     data class Device(val cert: String, val proof: String) : Credential {
-        override fun headerValue() = "Device " + DeviceCredential.format(cert, proof)
+        override fun headerValue() = DeviceCredential.headerValue(cert, proof)
     }
 
     companion object {

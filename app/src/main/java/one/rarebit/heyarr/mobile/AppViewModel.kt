@@ -10,9 +10,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import one.rarebit.heyarr.mobile.auth.Credential
-import one.rarebit.heyarr.mobile.auth.DeviceCredential
-import one.rarebit.heyarr.mobile.auth.DeviceSession
-import one.rarebit.heyarr.mobile.auth.PossessionProof
 import one.rarebit.heyarr.mobile.device.DeviceKeyInfo
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
 import one.rarebit.heyarr.mobile.device.EnrolClient
@@ -35,6 +32,8 @@ import one.rarebit.heyarr.mobile.search.SessionClient
 import one.rarebit.heyarr.mobile.settings.InMemorySettingsStore
 import one.rarebit.heyarr.mobile.settings.SettingsStore
 import one.rarebit.voidbind.Invite
+import one.rarebit.voidbind.auth.DeviceCredential
+import one.rarebit.voidbind.auth.PossessionProof
 import one.rarebit.voidbind.flow.DevicePairing
 import one.rarebit.voidbind.net.RelayClient
 import one.rarebit.voidbind.net.HttpTransport as VoidbindHttpTransport
@@ -67,14 +66,14 @@ class AppViewModel(
      * proof in force). Null while signed in with a QR session, or before enrolment.
      */
     @Volatile
-    private var deviceSession: DeviceSession? = null
+    private var deviceCredential: DeviceCredential? = null
 
     /**
      * The app's transport: every `/api/v1` request an enrolled device makes goes through
      * [DeviceAuthTransport], which keeps the `Device` credential fresh and re-mints +
      * retries once on a 401 (mobile-client constraint 2).
      */
-    val transport: HttpTransport = DeviceAuthTransport(OkHttpTransport()) { deviceSession }
+    val transport: HttpTransport = DeviceAuthTransport(OkHttpTransport(), { deviceCredential })
 
     /** Shared OkHttp client for the Media3 blob-stream data source. */
     val httpClient: OkHttpClient = OkHttpClient()
@@ -146,7 +145,7 @@ class AppViewModel(
     /** Drop the session and return to the login screen. */
     fun signOut() {
         credential = null
-        deviceSession = null
+        deviceCredential = null
         _sessionAuthority.value = null
         _nowPlaying.value = null
         _libraryState.value = LibraryUiState.Loading
@@ -212,7 +211,7 @@ class AppViewModel(
      */
     fun attachDevice(ring: DeviceKeyring) {
         keyring = ring
-        if (deviceSession != null) return
+        if (deviceCredential != null) return
         viewModelScope.launch {
             // peek(): never provisions, so a fresh install does not open with a biometric prompt.
             val result = withContext(Dispatchers.IO) { runCatching { ring.peek() } }
@@ -249,14 +248,16 @@ class AppViewModel(
         val adopted = withContext(Dispatchers.IO) {
             runCatching {
                 val identity = ring.identity()
-                val session = DeviceSession(
+                val live = DeviceCredential(
                     certToken = certToken,
-                    prover = DeviceCredential.Prover { identity.sign(it) },
+                    signer = identity.asSigner(),
+                    clock = { System.currentTimeMillis() / 1000 },
                     ttlSeconds = DEVICE_PROOF_TTL_SECONDS,
+                    reuseForSeconds = DEVICE_PROOF_REUSE_SECONDS,
                 )
-                val cred = session.current() // mints the first proof — may prompt
-                deviceSession = session
-                cred
+                val first = live.current() // mints the first proof — may prompt
+                deviceCredential = live
+                Credential.Device(first.cert, first.proof)
             }
         }
         adopted.onSuccess { cred ->
@@ -350,7 +351,7 @@ class AppViewModel(
                     val cert = p.confirm(h)
                     ring.saveCert(cert)
                     val identity = ring.identity()
-                    val proof = PossessionProof.mint(cert, System.currentTimeMillis() / 1000, sign = identity::sign)
+                    val proof = PossessionProof.mint(cert, identity.asSigner(), System.currentTimeMillis() / 1000)
                     EnrolClient(transport, config.baseUrl).register(cert, proof, deviceName, credential)
                 }
             }
@@ -401,7 +402,7 @@ class AppViewModel(
         val ring = keyring ?: return
         viewModelScope.launch {
             withContext(Dispatchers.IO) { runCatching { ring.clearCert() } }
-            deviceSession = null
+            deviceCredential = null
             val info = withContext(Dispatchers.IO) { runCatching { ring.info() }.getOrNull() }
             _deviceInfo.value = info
             _enrolState.value = if (info != null) EnrolUiState.Ready(info) else EnrolUiState.Unprovisioned
@@ -420,6 +421,13 @@ class AppViewModel(
          * checks `exp` strictly but does not cap it. Re-minted early on a 401 regardless.
          */
         const val DEVICE_PROOF_TTL_SECONDS = 60L * 60
+
+        /**
+         * How long the live proof is REUSED before a proactive re-mint: until it is within
+         * the server's skew window of expiry (the library default, spelled out here so the
+         * biometric cadence is a deliberate app choice, not an inherited one).
+         */
+        const val DEVICE_PROOF_REUSE_SECONDS = DEVICE_PROOF_TTL_SECONDS - PossessionProof.SKEW_SECONDS
     }
 
     /**

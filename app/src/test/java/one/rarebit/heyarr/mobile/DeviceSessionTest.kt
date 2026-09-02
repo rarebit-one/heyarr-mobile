@@ -1,28 +1,39 @@
 package one.rarebit.heyarr.mobile
 
 import one.rarebit.heyarr.mobile.auth.Credential
-import one.rarebit.heyarr.mobile.auth.DeviceCredential
-import one.rarebit.heyarr.mobile.auth.DeviceSession
-import one.rarebit.heyarr.mobile.auth.PossessionProof
 import one.rarebit.heyarr.mobile.net.DeviceAuthTransport
 import one.rarebit.heyarr.mobile.net.HttpResponse
 import one.rarebit.heyarr.mobile.net.HttpTransport
+import one.rarebit.voidbind.Ed25519Signer
+import one.rarebit.voidbind.auth.DeviceCredential
+import one.rarebit.voidbind.auth.PossessionProof
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The app's Device-credential lifecycle over voidbind-client's `DeviceCredential` +
+ * `DeviceAuthPolicy` (0.4.0): one proof reused for `reuseForSeconds`, re-minted
+ * proactively inside the skew window, and re-minted + retried ONCE on a 401 by
+ * [DeviceAuthTransport]. Behaviour pinned here is what the app relied on before the
+ * library took the implementation over — the biometric cost must not change.
+ */
 class DeviceSessionTest {
 
     private val seed = ByteArray(32) { 0x02 }
     private val cert = "eyJ2IjoyfQ.c2ln" // any opaque token — the proof hashes it as presented
     private var signs = 0
-    private val prover = DeviceCredential.Prover { signs++; JdkEd25519.sign(seed, it) }
+    private val signer = Ed25519Signer { signs++; JdkEd25519.sign(seed, it) }
+
+    private fun session(clock: () -> Long, ttl: Long = 120) =
+        DeviceCredential(cert, signer, clock, ttlSeconds = ttl, reuseForSeconds = ttl - PossessionProof.SKEW_SECONDS)
 
     @Test fun reusesAProofUntilTheSkewWindowThenRemints() {
         var now = 1_000_000L
-        val s = DeviceSession(cert, prover, clock = { now }, ttlSeconds = 120)
+        val s = session({ now })
         val a = s.current()
         assertSame(a, s.current())
         now += 80 // 40s left: still outside the 30s skew → reuse
@@ -48,10 +59,10 @@ class DeviceSessionTest {
     @Test fun transportRestampsStaleDeviceHeaderAndRetriesOnceOn401() {
         var now = 1_000_000L
         // A ticking clock, so the re-minted proof (deterministic Ed25519) differs by `iat`.
-        val s = DeviceSession(cert, prover, clock = { now++ }, ttlSeconds = 120)
+        val s = session({ now++ })
         val stale = Credential.Device(cert, "stale.proof")
         val inner = Scripted(401, 200)
-        val t = DeviceAuthTransport(inner) { s }
+        val t = DeviceAuthTransport(inner, { s })
 
         val resp = t.get("https://h/api/v1/works", stale.asHeader())
         assertEquals(200, resp.status)
@@ -66,16 +77,16 @@ class DeviceSessionTest {
     }
 
     @Test fun transportSurfacesASecond401AsIs() {
-        val s = DeviceSession(cert, prover, clock = { 5L }, ttlSeconds = 120)
+        val s = session({ 5L })
         val inner = Scripted(401, 401, 200)
-        val resp = DeviceAuthTransport(inner) { s }.get("u", Credential.Device(cert, "x").asHeader())
+        val resp = DeviceAuthTransport(inner, { s }).get("u", Credential.Device(cert, "x").asHeader())
         assertEquals(401, resp.status)
         assertEquals(2, inner.seen.size)
     }
 
     @Test fun transportLeavesBearerAndAnonymousRequestsAlone() {
         val inner = Scripted(401, 401)
-        val t = DeviceAuthTransport(inner) { DeviceSession(cert, prover, { 1L }) }
+        val t = DeviceAuthTransport(inner, { session({ 1L }) })
         assertEquals(401, t.get("u", Credential.Session("tok").asHeader()).status)
         assertEquals(401, t.get("u").status)
         assertEquals("Bearer tok", inner.seen[0]["Authorization"])
@@ -84,8 +95,41 @@ class DeviceSessionTest {
 
     @Test fun noSessionMeansPassThrough() {
         val inner = Scripted(401)
-        val t = DeviceAuthTransport(inner) { null }
+        val t = DeviceAuthTransport(inner, { null })
         assertEquals(401, t.get("u", Credential.Device(cert, "p").asHeader()).status)
         assertEquals("Device $cert~p", inner.seen[0]["Authorization"])
+    }
+
+    /** The app's real window: a 1 h ttl reused for 59.5 min — one prompt an hour, not one per request. */
+    @Test fun appHourWindowReusesForTtlMinusSkew() {
+        var now = 1_000_000L
+        val s = session({ now }, ttl = 3600)
+        val a = s.current()
+        now += 3600 - 31 // one second outside the skew window → still reused
+        assertSame(a, s.current())
+        now += 1 // inside → re-mint
+        assertNotEquals(a, s.current())
+        assertEquals(2, signs)
+    }
+
+    @Test fun membershipHeaderIsAbsentUntilProvided() {
+        val inner = Scripted(200, 200, 200)
+        val s = session({ 5L })
+        DeviceAuthTransport(inner, { s }).get("u", Credential.Device(cert, "x").asHeader())
+        DeviceAuthTransport(inner, { s }, membership = { "" }).get("u", Credential.Device(cert, "x").asHeader())
+        assertFalse(inner.seen[0].containsKey(DeviceAuthTransport.MEMBERSHIP_HEADER))
+        assertFalse(inner.seen[1].containsKey(DeviceAuthTransport.MEMBERSHIP_HEADER))
+        assertEquals("Voidbind-Membership", DeviceAuthTransport.MEMBERSHIP_HEADER)
+    }
+
+    @Test fun membershipHeaderRidesDeviceRequestsWhenProvided() {
+        val inner = Scripted(401, 200, 200)
+        val s = session({ 5L })
+        val t = DeviceAuthTransport(inner, { s }, membership = { "m.assertion" })
+        t.get("u", Credential.Device(cert, "x").asHeader())
+        assertEquals("m.assertion", inner.seen[0][DeviceAuthTransport.MEMBERSHIP_HEADER])
+        assertEquals("m.assertion", inner.seen[1][DeviceAuthTransport.MEMBERSHIP_HEADER]) // survives the retry
+        t.get("u", Credential.Session("tok").asHeader())
+        assertFalse(inner.seen[2].containsKey(DeviceAuthTransport.MEMBERSHIP_HEADER)) // Bearer: untouched
     }
 }

@@ -30,7 +30,7 @@ This is a **scaffold** — a buildable, tested foundation, not a finished app.
 ### voidbind-kmp consumption
 
 This app depends on the **published** shared client,
-`one.rarebit.voidbind:voidbind-client:0.2.1` (GitHub Packages, private — a token with
+`one.rarebit.voidbind:voidbind-client:0.4.0` (GitHub Packages, private — a token with
 `read:packages` is required even for a same-org read). `settings.gradle.kts` reads
 `gpr.user` / `gpr.token` from `~/.gradle/gradle.properties`, or `GITHUB_ACTOR` /
 `GITHUB_TOKEN` from the environment; CI passes its own workflow token. Locally:
@@ -40,9 +40,11 @@ GITHUB_ACTOR=<your login> GITHUB_TOKEN=$(gh auth token) ./gradlew testDebugUnitT
 ```
 
 `login/` is now a thin façade over the library's `WebLoginClient` / `LoginQr`, and the
-device credential is real: `auth/PossessionProof` mints heyarr's possession proof
-byte-for-byte (pinned by Go-minted golden vectors) and signs it with the phone's
-hardware-sealed key (`device/DeviceKeyring` → voidbind-client `DeviceKeyStore`).
+device credential is real: the library's `auth/{PossessionProof, DeviceCredential,
+DeviceAuthPolicy}` mint heyarr's possession proof byte-for-byte (the Go-minted golden
+vectors stay pinned in this repo's `PossessionProofTest`) and sign it with the phone's
+hardware-sealed key (`device/DeviceKeyring` → voidbind-client `DeviceKeyStore`); the
+app reuses one proof for ~1 h (`reuseForSeconds`) and re-mints + retries once on a 401.
 
 ## Build / test
 
