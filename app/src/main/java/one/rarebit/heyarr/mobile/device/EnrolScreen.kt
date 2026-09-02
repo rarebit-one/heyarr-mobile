@@ -6,16 +6,19 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -29,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -37,6 +41,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import one.rarebit.heyarr.mobile.login.QrCode
 
 /** UI state for the "Enrol this device" screen. */
@@ -51,10 +56,12 @@ sealed interface EnrolUiState {
     data class Ready(val info: DeviceKeyInfo) : EnrolUiState
 
     /**
-     * This device opened a relay session and is showing the invite; the handshake is
-     * waiting for the authorising side to join ([inviteQr] is the `voidbind:pair?…` tuple).
+     * The handshake is running over the relay. Either this device opened the session and
+     * is showing the invite for the authorising side to scan ([joined] = false), or it
+     * **joined** an invite the authorising side printed — scanned or pasted — and is
+     * connecting to that relay ([joined] = true). [inviteQr] is the `voidbind:pair?…` tuple.
      */
-    data class Inviting(val info: DeviceKeyInfo, val inviteQr: String) : EnrolUiState
+    data class Inviting(val info: DeviceKeyInfo, val inviteQr: String, val joined: Boolean = false) : EnrolUiState
 
     /** Handshake done: show the SAS for the human to compare on both screens. */
     data class CompareSas(val info: DeviceKeyInfo, val sas: String) : EnrolUiState
@@ -73,7 +80,9 @@ sealed interface EnrolUiState {
  * commit-before-reveal handshake once the authorising side joins, shows the SAS for
  * the human to compare, and — only after they match — receives the user-signed
  * enrolment cert sealed to this device's X25519 key. An invite the *other* side
- * created can be pasted instead.
+ * created (the Mac's `voidbind pair-initiate` QR) can be **scanned with the camera**
+ * or pasted instead — both go through [PairInvite] (the library's parser) before the
+ * join.
  *
  * Until a cert exists the app keeps using the QR web-login session (read-only).
  */
@@ -139,6 +148,20 @@ fun EnrolScreen(
                 Button(onClick = onStartPairing) { Text("Start pairing") }
                 InviteEntry(onJoinInvite)
             }
+            is EnrolUiState.Inviting if state.joined -> {
+                Text("Joining the pairing…", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Connecting to the relay the invite names and running the handshake. " +
+                        "Next you'll compare a security code with the one on the Mac's terminal.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Relay: " + ((PairInvite.check(state.inviteQr) as? PairInvite.Valid)?.relay ?: "—"),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            }
             is EnrolUiState.Inviting -> {
                 Text("Waiting for the authorising device…", style = MaterialTheme.typography.titleMedium)
                 if (onOpenInVoidbind != null) {
@@ -156,15 +179,13 @@ fun EnrolScreen(
             is EnrolUiState.CompareSas -> {
                 Text("Compare the security code", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    state.sas,
-                    style = MaterialTheme.typography.displaySmall,
-                    fontFamily = FontFamily.Monospace,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
+                    "The Mac's terminal (or the Voidbind app) is showing a code too.",
+                    style = MaterialTheme.typography.bodySmall,
                 )
+                SasCard(state.sas)
                 Text(
-                    "The authorising device shows a code too. Continue only if they are the SAME " +
-                        "number — that comparison is what stops an attacker on the network.",
+                    "Tap \"Codes match\" only if both show the SAME number — that comparison " +
+                        "is what stops an attacker on the network from standing in the middle.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -226,10 +247,87 @@ private fun DeviceKeyCard(info: DeviceKeyInfo) {
     }
 }
 
+/**
+ * The short authentication string, big enough to read across the room and compare
+ * digit-by-digit against the Mac's terminal. Monospace + letter-spacing so `1`/`7` and
+ * `0`/`8` don't blur together; a single line that never wraps.
+ */
+@Composable
+private fun SasCard(sas: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp, horizontal = 12.dp)) {
+            Text(
+                "SECURITY CODE",
+                style = MaterialTheme.typography.labelMedium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                sas,
+                style = MaterialTheme.typography.displayMedium,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 6.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                softWrap = false,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Join an invite the authorising side printed: **scan** the Mac's QR with the camera, or
+ * **paste** its text. Both go through [PairInvite.check] — the library's parser — and
+ * anything that isn't a `voidbind:pair?…` invite is refused inline with a reason, while
+ * the scanner keeps looking so the user can just point at the right code.
+ */
 @Composable
 private fun InviteEntry(onJoin: (String) -> Unit) {
     var invite by rememberSaveable { mutableStateOf("") }
-    Text("…or paste an invite", style = MaterialTheme.typography.titleSmall)
+    var scanning by rememberSaveable { mutableStateOf(false) }
+    var problem by rememberSaveable { mutableStateOf<String?>(null) }
+
+    /** Returns true when the text was a valid invite and the join was started. */
+    fun submit(raw: String): Boolean = when (val r = PairInvite.check(raw)) {
+        is PairInvite.Valid -> {
+            problem = null
+            scanning = false
+            onJoin(r.inviteQr)
+            true
+        }
+        is PairInvite.Invalid -> {
+            problem = r.message
+            false
+        }
+    }
+
+    Text("…or join an invite from your Mac", style = MaterialTheme.typography.titleSmall)
+    Text(
+        "`voidbind pair-initiate` on a machine holding your identity prints an invite QR. " +
+            "Scan it here, or paste the voidbind:pair?… text.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    if (scanning) {
+        QrScanner(
+            onQr = { raw -> submit(raw) },
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)),
+            noPermission = {
+                Text(
+                    "Camera permission is needed to scan the invite — allow it, or paste the invite below.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+        )
+        OutlinedButton(onClick = { scanning = false }) { Text("Stop scanning") }
+    } else {
+        Button(onClick = { problem = null; scanning = true }) { Text("Scan invite QR") }
+    }
     OutlinedTextField(
         value = invite,
         onValueChange = { invite = it },
@@ -237,8 +335,11 @@ private fun InviteEntry(onJoin: (String) -> Unit) {
         minLines = 2,
         modifier = Modifier.fillMaxWidth(),
     )
-    OutlinedButton(onClick = { onJoin(invite.trim()) }, enabled = invite.trim().startsWith("voidbind:pair?")) {
+    OutlinedButton(onClick = { submit(invite) }, enabled = invite.isNotBlank()) {
         Text("Join pairing")
+    }
+    problem?.let {
+        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
 }
 

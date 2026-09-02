@@ -86,6 +86,18 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment:1.8.3")
 
+    // ── Invite QR scanning (Enrol → scan the Mac's `voidbind:pair?…` QR) ───────
+    // CameraX preview + analysis with ML Kit barcode decoding — the same stack and
+    // versions as the Voidbind authenticator (voidbind-kmp androidApp), so both apps
+    // scan alike on the same phone. Validation of what was scanned is the library's
+    // `Invite.decode` (device/PairInvite), never a re-derived parser.
+    val cameraX = "1.3.4"
+    implementation("androidx.camera:camera-core:$cameraX")
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-lifecycle:$cameraX")
+    implementation("androidx.camera:camera-view:$cameraX")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+
     // ── Media3 / ExoPlayer (M10 playback) ───────────────────────────────────────
     // The player itself, the PlayerView (transport controls) and the OkHttp-backed
     // HTTP data source. ExoPlayer's HTTP data source issues Range requests and
