@@ -25,7 +25,42 @@ class EnrolClientTest {
         val f = Fake(mapOf("http://h/enrol" to 201))
         val out = EnrolClient(f, base).register("CERT", "PROOF", "phone", Credential.Session("t"))
         assertEquals(EnrolClient.Outcome.Registered("POST /enrol"), out)
+        // No ops known (a bare genesis add): the pre-ADR-0068 body, byte for byte.
         assertEquals("""{"cert":"CERT","proof":"PROOF","name":"phone"}""", f.posts.single().second)
+    }
+
+    /** ADR-0068: the admitting op rides under `cert` (either token, either field) and the known ops under `ops`. */
+    @Test fun selfEnrolPresentsTheKnownOps() {
+        val f = Fake(mapOf("http://h/enrol" to 201))
+        val out = EnrolClient(f, base).register("OP", "PROOF", "phone", null, ops = listOf("A.a", "OP"))
+        assertEquals(EnrolClient.Outcome.Registered("POST /enrol"), out)
+        assertEquals("""{"cert":"OP","proof":"PROOF","name":"phone","ops":["A.a","OP"]}""", f.posts.single().second)
+    }
+
+    /**
+     * A node that predates `ops` decodes strictly (an unknown field is a 400): the
+     * body is retried once WITHOUT them, so an app ahead of its server keeps enrolling.
+     */
+    @Test fun aNodeThatRefusesOpsIsRetriedOnceWithoutThem() {
+        val f = object : HttpTransport {
+            val bodies = ArrayList<String?>()
+            override fun get(url: String, headers: Map<String, String>) = HttpResponse(404, "")
+            override fun post(url: String, body: String?, contentType: String?, headers: Map<String, String>): HttpResponse {
+                bodies += body
+                return if (body!!.contains("\"ops\"")) HttpResponse(400, """{"detail":"json: unknown field \"ops\""}""") else HttpResponse(201, "{}")
+            }
+        }
+        val out = EnrolClient(f, base).register("OP", "PROOF", "phone", null, ops = listOf("A.a"))
+        assertEquals(EnrolClient.Outcome.Registered("POST /enrol"), out)
+        assertEquals(2, f.bodies.size)
+        assertEquals("""{"cert":"OP","proof":"PROOF","name":"phone"}""", f.bodies[1])
+    }
+
+    @Test fun aSecond400WithoutOpsSurfacesTheDetailOnce() {
+        val f = Fake(mapOf("http://h/enrol" to 400))
+        val out = EnrolClient(f, base).register("OP", "P", "n", null, ops = listOf("A.a"))
+        assertEquals(EnrolClient.Outcome.Failed("nope"), out)
+        assertEquals(2, f.posts.size) // with ops, then without — never a third
     }
 
     @Test fun fallsBackToAdminRouteAndReportsNeedsAdminOn403() {

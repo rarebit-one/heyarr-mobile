@@ -30,7 +30,7 @@ This is a **scaffold** — a buildable, tested foundation, not a finished app.
 ### voidbind-kmp consumption
 
 This app depends on the **published** shared client,
-`one.rarebit.voidbind:voidbind-client:0.4.0` (GitHub Packages, private — a token with
+`one.rarebit.voidbind:voidbind-client:0.5.0` (GitHub Packages, private — a token with
 `read:packages` is required even for a same-org read). `settings.gradle.kts` reads
 `gpr.user` / `gpr.token` from `~/.gradle/gradle.properties`, or `GITHUB_ACTOR` /
 `GITHUB_TOKEN` from the environment; CI passes its own workflow token. Locally:
@@ -45,6 +45,11 @@ DeviceAuthPolicy}` mint heyarr's possession proof byte-for-byte (the Go-minted g
 vectors stay pinned in this repo's `PossessionProofTest`) and sign it with the phone's
 hardware-sealed key (`device/DeviceKeyring` → voidbind-client `DeviceKeyStore`); the
 app reuses one proof for ~1 h (`reuseForSeconds`) and re-mints + retries once on a 401.
+Since 0.5.0 (voidbind-kmp ADR-0005) the credential token is this device's **admitting
+op** and the app also holds the identity's membership **ops** (its replica): they ride
+every Device request as `Voidbind-Membership` (`device/MembershipOps` picks ≤ 64) and
+`POST /enrol {…, ops}`, and after a 401 the app re-reads `GET /membership/{usr}` so a
+device another member removed shows an honest "removed" state instead of looping.
 
 ## Build / test
 
@@ -66,12 +71,14 @@ These need real hardware / a live server and can't be proven in CI:
   a device/emulator. The `POST /api/v1/playback` transcode/remux negotiation is wired
   (`PlaybackClient.plan`) but keyed on an enrolled `device_id`, so it goes live with device auth.
 - **Device-cert login** — now **ships**: the sealed-key possession proof, the pairing
-  handshake (`device/`, this phone = relay responder) and re-mint-on-401. What is still
-  gated on the *server*: a voidbind-go relay mounted under the node (`<baseUrl>/pair/v1/…`, heyarr-core #421 — the client's relay base is `<baseUrl>/pair`),
-  a self-enrol route (`POST /enrol`) or an admin registering the cert
+  handshake (`device/`, this phone = the NEW device joining a v3 invite that Cruciform
+  or `voidbind pair-initiate` rendered) and re-mint-on-401. What is still gated on the
+  *server*: `POST /enrol` taking `ops` and `GET /membership/{usr}` (heyarr-core ADR-0068,
+  PR #426 — until it lands the app retries `/enrol` without `ops` and treats a 404 on
+  `/membership` as "nothing learned"), or an admin registering the op
   (`POST /api/v1/identities/devices`), and write scope for a device (heyarr-core #417 +
-  `POST /api/v1/session/management-grants`). Completing a pairing needs the owner's
-  identity on the other side, so it is proven on-device, not in CI. Honest key tier on
+  `POST /api/v1/session/management-grants`). Completing a pairing needs a member device
+  on the other side, so it is proven on-device, not in CI. Honest key tier on
   the Nothing Phone (2a): **TEE**, not StrongBox.
 - **On-device personal-state decrypt** — the real `Unwrapper` (X25519 ECDH in-enclave → HKDF →
   the space key) + AEAD decryption of opaque changes, and the local **Personal MCP** (#372/#387)

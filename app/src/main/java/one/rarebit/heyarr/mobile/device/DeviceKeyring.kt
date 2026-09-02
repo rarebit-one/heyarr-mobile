@@ -1,11 +1,14 @@
 package one.rarebit.heyarr.mobile.device
 
 import android.content.Context
-import one.rarebit.voidbind.Cert
 import one.rarebit.voidbind.DeviceIdentity
 import one.rarebit.voidbind.DeviceKeyStore
 import one.rarebit.voidbind.KeyRef
+import one.rarebit.voidbind.Membership
+import one.rarebit.voidbind.MembershipOp
 import one.rarebit.voidbind.VoidbindAndroid
+import one.rarebit.voidbind.crypto.MiniJson
+import one.rarebit.voidbind.net.Admission
 import java.io.File
 
 /** The honest hardware tier of the device signing key's wrapping key (never over-stated). */
@@ -15,11 +18,19 @@ enum class KeyTier { STRONGBOX, TEE, SOFTWARE }
 data class DeviceKeyInfo(
     /** `ed25519:<hex>` — the key an operator names to authorise this device. */
     val deviceKey: String,
-    /** `x25519:<hex>` — the encryption key a pairing cert binds as `denc`. */
+    /** `x25519:<hex>` — the encryption key a pairing add op binds as `denc`. */
     val deviceEncKey: String,
     val tier: KeyTier,
-    /** The user-signed enrolment cert token, once this device has been paired in. */
+    /**
+     * This device's **admitting op** — the membership op (voidbind-kmp ADR-0005) that
+     * added it, presented as the credential token in the `Device` scheme. A v1/v2
+     * cert from an earlier pairing IS a genesis add and is kept as-is.
+     */
     val certToken: String?,
+    /** The identity (`ed25519:<hex>`, the genesis key) the admitting op belongs to. */
+    val userId: String? = null,
+    /** The membership ops this device knows — its replica (the admission's `ops`, plus what the node served). */
+    val knownOps: List<String> = emptyList(),
 ) {
     val isEnrolled: Boolean get() = certToken != null
 }
@@ -33,9 +44,12 @@ data class DeviceKeyInfo(
  *    first run and never exported; every possession proof is signed through it.
  *  - the **X25519 encryption key** (which no secure element can hold) is sealed at
  *    rest by [SealedSecretStore]; its public half is stored plain. It is what unseals
- *    a cert delivered over the pairing relay.
- *  - the **enrolment cert** (a public, user-signed token) is stored plain once pairing
- *    completes.
+ *    an admission delivered over the pairing relay.
+ *  - the **admission** (ADR-0005): the public, member-signed **add op** that admitted
+ *    this device (the credential token) and the **ops** that authorise it (this
+ *    device's replica of the identity's membership log), both stored plain once
+ *    pairing completes. The replica grows as the node serves more ops
+ *    (`GET /membership/{usr}`), which is how the device learns it was removed.
  *
  * Keystore calls that need a fresh user authentication (first provisioning, and
  * every signature) go through the [BiometricGate]; run this off the main thread.
@@ -55,6 +69,7 @@ class DeviceKeyring(
     private fun dir(): File = File(app.filesDir, "heyarr-device").apply { mkdirs() }
     private fun encPubFile() = File(dir(), "enc.$alias.pub")
     private fun certFile() = File(dir(), "cert.$alias.token")
+    private fun opsFile() = File(dir(), "ops.$alias.json")
 
     /** True once the sealed signing key exists on this phone (no prompt to check). */
     fun isProvisioned(): Boolean = File(File(app.filesDir, "voidbind"), "$alias.key").exists()
@@ -101,40 +116,72 @@ class DeviceKeyring(
         DeviceKeyStore.SecurityLevel.SOFTWARE -> KeyTier.SOFTWARE
     }
 
+    /** This device's admitting op (the credential token), once paired in. */
     fun certToken(): String? = certFile().takeIf { it.exists() }?.readText()?.trim()?.ifEmpty { null }
 
+    /** The identity the admitting op claims (`ed25519:<hex>`), or null before enrolment. */
+    fun userId(): String? = certToken()?.let { runCatching { MembershipOp.user(it) }.getOrNull() }
+
     /**
-     * Persist a delivered enrolment cert after checking it names THIS device's keys —
-     * a cert for another device would be refused by the server anyway, but storing it
-     * would wedge the app into a Device credential that never works.
+     * The membership ops this device knows, in hash order. Always includes the admitting
+     * op itself, so a replica written by an older build (cert only) still presents.
      */
-    fun saveCert(token: String) {
-        val parsed = Cert.parse(token).cert
-        val info = info()
-        require(parsed.device.render() == info.deviceKey) { "cert binds a different device key" }
-        require(parsed.deviceEnc.render() == info.deviceEncKey) { "cert binds a different encryption key" }
-        certFile().writeText(token)
+    fun knownOps(): List<String> {
+        val stored = opsFile().takeIf { it.exists() }?.let { f ->
+            runCatching {
+                (MiniJson.parseObject(f.readText())[OPS_KEY] as? List<*>)?.map { it as String }
+            }.getOrNull()
+        } ?: emptyList()
+        val own = certToken()?.let { listOf(it) } ?: emptyList()
+        return Membership.merge(stored, own)
     }
 
-    /** Forget the cert (the keys stay — re-pairing re-uses them). */
+    /** Replace the replica (merged with the admitting op so it can never be dropped). */
+    fun saveOps(ops: List<String>) {
+        val own = certToken()?.let { listOf(it) } ?: emptyList()
+        opsFile().writeText(MiniJson.encodeObject(listOf(OPS_KEY to Membership.merge(ops, own))))
+    }
+
+    /**
+     * Persist a delivered [Admission] after checking its op names THIS device's keys —
+     * an op for another device would be refused by the server anyway, but storing it
+     * would wedge the app into a Device credential that never works. Both halves are
+     * kept: [Admission.op] is the credential token, [Admission.ops] the replica.
+     */
+    fun saveAdmission(admission: Admission) {
+        val parsed = MembershipOp.verify(admission.op)
+        val info = info()
+        require(parsed.kind == MembershipOp.Kind.ADD) { "admission is a ${parsed.kind.wire}, not an add" }
+        require(parsed.device == info.deviceKey) { "admission binds a different device key" }
+        require(parsed.deviceEnc == info.deviceEncKey) { "admission binds a different encryption key" }
+        certFile().writeText(admission.op)
+        saveOps(admission.ops)
+    }
+
+    /** Forget the admission (the keys stay — re-pairing re-uses them). */
     fun clearCert() {
         certFile().delete()
+        opsFile().delete()
     }
 
     /** Snapshot for the UI. Provisions the keys on first call. */
     fun info(): DeviceKeyInfo {
         val ks = keyStore()
         val enc = encryptionKey()
+        val cert = certToken()
         return DeviceKeyInfo(
             deviceKey = ks.publicKey().render(),
             deviceEncKey = KeyRef.x25519(enc.publicKey).render(),
             tier = tier(ks),
-            certToken = certToken(),
+            certToken = cert,
+            userId = cert?.let { runCatching { MembershipOp.user(it) }.getOrNull() },
+            knownOps = if (cert != null) knownOps() else emptyList(),
         )
     }
 
     companion object {
         const val DEFAULT_ALIAS = "heyarr-device"
         private const val ENC_SECRET = "enc"
+        private const val OPS_KEY = "ops"
     }
 }

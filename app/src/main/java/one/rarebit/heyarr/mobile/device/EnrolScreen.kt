@@ -1,7 +1,5 @@
 package one.rarebit.heyarr.mobile.device
 
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -27,22 +24,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import one.rarebit.heyarr.mobile.login.QrCode
 
 /** UI state for the "Enrol this device" screen. */
 sealed interface EnrolUiState {
@@ -56,18 +46,25 @@ sealed interface EnrolUiState {
     data class Ready(val info: DeviceKeyInfo) : EnrolUiState
 
     /**
-     * The handshake is running over the relay. Either this device opened the session and
-     * is showing the invite for the authorising side to scan ([joined] = false), or it
-     * **joined** an invite the authorising side printed — scanned or pasted — and is
-     * connecting to that relay ([joined] = true). [inviteQr] is the `voidbind:pair?…` tuple.
+     * This device **joined** an invite a member device rendered — scanned or pasted —
+     * and is connecting to the relay it names to run the handshake. [inviteQr] is the
+     * `voidbind:pair?…` tuple (v3: it carries the identity, `usr`).
      */
-    data class Inviting(val info: DeviceKeyInfo, val inviteQr: String, val joined: Boolean = false) : EnrolUiState
+    data class Joining(val info: DeviceKeyInfo, val inviteQr: String) : EnrolUiState
 
     /** Handshake done: show the SAS for the human to compare on both screens. */
     data class CompareSas(val info: DeviceKeyInfo, val sas: String) : EnrolUiState
 
-    /** The cert was delivered, verified and stored; [registration] says whether the node knows it yet. */
+    /** The admission was delivered, verified and stored; [registration] says whether the node knows it yet. */
     data class Enrolled(val info: DeviceKeyInfo, val registration: String, val needsAdmin: Boolean) : EnrolUiState
+
+    /**
+     * The node refused this device's credential and, on re-reading the identity's
+     * membership (`GET /membership/{usr}`), this device is no longer a member — another
+     * member removed it, or its add lapsed. [message] says which. The admission is kept
+     * on disk until the user forgets it; nothing retries in a loop.
+     */
+    data class Removed(val info: DeviceKeyInfo, val message: String) : EnrolUiState
 
     data class Error(val info: DeviceKeyInfo?, val message: String) : EnrolUiState
 }
@@ -75,25 +72,22 @@ sealed interface EnrolUiState {
 /**
  * The "Enrol this device" screen. This phone is the **new device** — voidbind-client's
  * `DevicePairing`, the relay *responder*: it shows its device key + honest hardware
- * tier, opens a relay session and renders the `voidbind:pair?…` invite (as a QR, and
- * as an "Open in Cruciform" hand-off to the authenticator app on this same phone), runs the
- * commit-before-reveal handshake once the authorising side joins, shows the SAS for
- * the human to compare, and — only after they match — receives the user-signed
- * enrolment cert sealed to this device's X25519 key. An invite the *other* side
- * created (the Mac's `voidbind pair-initiate` QR) can be **scanned with the camera**
- * or pasted instead — both go through [PairInvite] (the library's parser) before the
- * join.
+ * tier, **joins** the `voidbind:pair?…` invite a member device rendered (Cruciform's
+ * "Add a device" on another phone, or `voidbind pair-initiate` on the Mac — v3
+ * invites name the identity, so only a member can mint one; ADR-0005), scanned with
+ * the camera or pasted — both through [PairInvite] (the library's parser) — runs the
+ * commit-before-reveal handshake, judges the initiator's membership before any SAS
+ * exists, shows the SAS for the human to compare, and — only after they match —
+ * receives the member-signed **add op** plus the ops that authorise it, sealed to
+ * this device's X25519 key.
  *
- * Until a cert exists the app keeps using the QR web-login session (read-only).
+ * Until an admission exists the app keeps using the QR web-login session (read-only).
  */
 @Composable
 fun EnrolScreen(
     state: EnrolUiState,
     onCreateKey: () -> Unit,
-    onStartPairing: () -> Unit,
     onJoinInvite: (inviteQr: String) -> Unit,
-    /** Same-phone hand-off of the invite to the authenticator; null hides the button. */
-    onOpenInVoidbind: ((inviteQr: String) -> Unit)?,
     onSasMatches: () -> Unit,
     onSasMismatch: () -> Unit,
     onRetry: () -> Unit,
@@ -115,9 +109,10 @@ fun EnrolScreen(
 
         val info = when (state) {
             is EnrolUiState.Ready -> state.info
-            is EnrolUiState.Inviting -> state.info
+            is EnrolUiState.Joining -> state.info
             is EnrolUiState.CompareSas -> state.info
             is EnrolUiState.Enrolled -> state.info
+            is EnrolUiState.Removed -> state.info
             is EnrolUiState.Error -> state.info
             EnrolUiState.Loading, EnrolUiState.Unprovisioned -> null
         }
@@ -141,45 +136,33 @@ fun EnrolScreen(
             is EnrolUiState.Ready -> {
                 Text("Pair with your identity", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Start pairing here, then approve it from a device that holds your Voidbind " +
-                        "identity — the Cruciform app on this phone, or `voidbind pair-initiate` on your Mac.",
+                    "A device that is already a member of your Voidbind identity admits this one: " +
+                        "open \"Add a device\" in Cruciform on another phone, or run `voidbind " +
+                        "pair-initiate` on your Mac, and join the invite it shows here.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Button(onClick = onStartPairing) { Text("Start pairing") }
                 InviteEntry(onJoinInvite)
             }
-            is EnrolUiState.Inviting if state.joined -> {
+            is EnrolUiState.Joining -> {
+                val parsed = PairInvite.check(state.inviteQr) as? PairInvite.Valid
                 Text("Joining the pairing…", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Connecting to the relay the invite names and running the handshake. " +
-                        "Next you'll compare a security code with the one on the Mac's terminal.",
+                    "Connecting to the relay the invite names and running the handshake. The other " +
+                        "device must prove it is a member of the identity before any code is shown; " +
+                        "next you'll compare a security code with the one on its screen.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "Relay: " + ((PairInvite.check(state.inviteQr) as? PairInvite.Valid)?.relay ?: "—"),
+                    "Relay: " + (parsed?.relay ?: "—") + "\nIdentity: " + (parsed?.user ?: "—"),
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                 )
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
             }
-            is EnrolUiState.Inviting -> {
-                Text("Waiting for the authorising device…", style = MaterialTheme.typography.titleMedium)
-                if (onOpenInVoidbind != null) {
-                    Button(onClick = { onOpenInVoidbind(state.inviteQr) }) { Text("Open in Cruciform") }
-                    Text("…or scan this invite from the authorising device:", style = MaterialTheme.typography.bodySmall)
-                } else {
-                    Text("Scan this invite from the authorising device:", style = MaterialTheme.typography.bodySmall)
-                }
-                QrImage(state.inviteQr, modifier = Modifier.align(Alignment.CenterHorizontally))
-                SelectionContainer {
-                    Text(state.inviteQr, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                }
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
-            }
             is EnrolUiState.CompareSas -> {
                 Text("Compare the security code", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "The Mac's terminal (or Cruciform) is showing a code too.",
+                    "The other device — Cruciform, or the Mac's terminal — is showing a code too.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 SasCard(state.sas)
@@ -198,20 +181,31 @@ fun EnrolScreen(
                 Text(state.registration, style = MaterialTheme.typography.bodySmall,
                     color = if (state.needsAdmin) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 if (state.needsAdmin && info?.certToken != null) {
-                    Text("Certificate to register:", style = MaterialTheme.typography.labelSmall)
+                    Text("Admitting op to register:", style = MaterialTheme.typography.labelSmall)
                     SelectionContainer {
                         Text(info.certToken, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                     }
                 }
                 Text(
-                    "This device now signs in with its own certificate. Whether it can also " +
-                        "manage follows depends on the grant an admin gives its key.",
+                    "This device now signs in with its own admission (${info?.knownOps?.size ?: 0} membership " +
+                        "op(s) known). Whether it can also manage follows depends on the grant an admin gives its key.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(onClick = onDone) { Text("Continue") }
                     OutlinedButton(onClick = onForget) { Text("Forget enrolment") }
                 }
+            }
+            is EnrolUiState.Removed -> {
+                Text("This device was removed", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+                Text(state.message, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Its credential is no longer honoured, so nothing here retries. Forget the enrolment " +
+                        "to go back to the QR sign-in, and have a member device admit this phone again if " +
+                        "that was a mistake — only the recovery secret can re-add a removed device.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(onClick = onForget) { Text("Forget enrolment") }
             }
             is EnrolUiState.Error -> {
                 Text(state.message, color = MaterialTheme.colorScheme.error)
@@ -240,9 +234,14 @@ private fun DeviceKeyCard(info: DeviceKeyInfo) {
                 color = if (info.tier == KeyTier.SOFTWARE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                if (info.isEnrolled) "Status: enrolled (holds a user-signed certificate)" else "Status: not enrolled yet",
+                if (info.isEnrolled) "Status: enrolled (holds a member-signed admission)" else "Status: not enrolled yet",
                 style = MaterialTheme.typography.bodySmall,
             )
+            if (info.userId != null) {
+                SelectionContainer {
+                    Text("Identity: " + info.userId, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                }
+            }
         }
     }
 }
@@ -281,7 +280,7 @@ private fun SasCard(sas: String) {
 }
 
 /**
- * Join an invite the authorising side printed: **scan** the Mac's QR with the camera, or
+ * Join an invite a member device rendered: **scan** its QR with the camera, or
  * **paste** its text. Both go through [PairInvite.check] — the library's parser — and
  * anything that isn't a `voidbind:pair?…` invite is refused inline with a reason, while
  * the scanner keeps looking so the user can just point at the right code.
@@ -306,10 +305,10 @@ private fun InviteEntry(onJoin: (String) -> Unit) {
         }
     }
 
-    Text("…or join an invite from your Mac", style = MaterialTheme.typography.titleSmall)
+    Text("Join an invite", style = MaterialTheme.typography.titleSmall)
     Text(
-        "`voidbind pair-initiate` on a machine holding your identity prints an invite QR. " +
-            "Scan it here, or paste the voidbind:pair?… text.",
+        "Cruciform's \"Add a device\" (on a phone that is already a member) or `voidbind pair-initiate` " +
+            "on your Mac shows an invite QR. Scan it here, or paste the voidbind:pair?… text.",
         style = MaterialTheme.typography.bodySmall,
     )
     if (scanning) {
@@ -331,7 +330,7 @@ private fun InviteEntry(onJoin: (String) -> Unit) {
     OutlinedTextField(
         value = invite,
         onValueChange = { invite = it },
-        label = { Text("voidbind:pair?v=2&relay=…&session=…&salt=…") },
+        label = { Text("voidbind:pair?v=3&relay=…&session=…&salt=…&usr=…") },
         minLines = 2,
         modifier = Modifier.fillMaxWidth(),
     )
@@ -341,19 +340,4 @@ private fun InviteEntry(onJoin: (String) -> Unit) {
     problem?.let {
         Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
-}
-
-private val QR_SIZE = 220.dp
-
-@Composable
-private fun QrImage(text: String, modifier: Modifier = Modifier) {
-    val px = with(LocalDensity.current) { QR_SIZE.roundToPx() }
-    val image = remember(text, px) { QrCode.bitmap(text, px).asImageBitmap() }
-    Image(
-        bitmap = image,
-        contentDescription = "Pairing invite QR",
-        contentScale = ContentScale.FillBounds,
-        filterQuality = FilterQuality.None,
-        modifier = modifier.size(QR_SIZE).background(Color.White),
-    )
 }
