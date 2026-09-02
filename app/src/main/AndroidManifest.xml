@@ -10,6 +10,12 @@
          Optional so the app still installs on camera-less devices; Enrol keeps the paste path. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- A pairing with Cruciform on this phone has the user switching apps for minutes; the
+         relay wait runs in an app-scoped holder under a "Pairing with Cruciform…" foreground
+         service (device/PairingForegroundService) so the process is not killed meanwhile. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Package visibility (Android 11+): let us resolve the Cruciform authenticator app for the
          same-phone `voidbind:` hand-off, so the "Approve on this phone" / "Open in Cruciform"
@@ -22,6 +28,7 @@
     </queries>
 
     <application
+        android:name=".HeyarrApp"
         android:allowBackup="true"
         android:icon="@android:drawable/ic_menu_slideshow"
         android:label="@string/app_name"
@@ -59,6 +66,12 @@
                 <data android:scheme="heyarr-mobile" android:host="pair" />
             </intent-filter>
         </activity>
+
+        <!-- Holds the process alive while a pairing is in flight (see the permissions above). -->
+        <service
+            android:name=".device.PairingForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

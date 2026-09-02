@@ -80,6 +80,25 @@ and joins it automatically after "Create device key" — a link never triggers t
 fingerprint prompt by itself; a still-loading keyring continues when the read lands. The
 SAS is shown large with "switch back to Cruciform" copy; the confirm happens on Cruciform.
 
+**The pipeline runs in an app-scoped holder, not the ViewModel.** `device/PairingCoordinator`
+(pure Kotlin, unit-tested state machine, keyed by the invite's relay **session id**) lives in
+`HeyarrApp.pairing` on an app-wide scope and drives join → SAS → human gate → admission →
+`POST /enrol` through the `PairingSteps` seam (`device/DevicePairingSteps` = the library's
+`DevicePairing` + `DeviceKeyring.saveAdmission` + `EnrolClient`); `AppViewModel.enrolState`
+only *projects* it. While a session is live a **foreground service** ("Pairing with
+Cruciform…", `device/PairingForegroundService`, `dataSync`) keeps the process alive, so the
+same-phone dance — the user switching to Cruciform to create the key / compare / confirm —
+cannot kill the relay poll. The library's `RelayClient` gives up on a peer slot after a fixed
+**60 s** (the 401 polls at 150 ms the node's relay log showed); `device/PatientRelayTransport`
+stretches each poll to the relay session **TTL (10 min)** and surfaces the deadline as the
+library's own `RelayTimeout`, so `TIMEOUT` stays distinct from `UNREACHABLE` / `REJECTED` /
+`PROTOCOL` (`PairingFailure`, titled on the screen). The Enrol screen shows a countdown while
+Joining and keeps the SAS up (with the countdown) while awaiting the admission after "Codes
+match". A `PendingPairing` record (invite tuple only — the handshake state is not
+serialisable and relay slots are write-once) is persisted for the life of the session, so a
+return after a **process death** reports INTERRUPTED / EXPIRED ("start again in Cruciform")
+instead of re-joining a dead session; re-firing the same link while live is a no-op.
+
 ## voidbind-kmp is consumed as the published `voidbind-client` artifact
 
 `one.rarebit.voidbind:voidbind-client:0.5.0` from GitHub Packages (private; needs a
@@ -134,11 +153,13 @@ unwrap + a local **Personal MCP** (#372/#387) are device-gated follow-ups.
 
 ```
 app/src/main/java/one/rarebit/heyarr/mobile/
-  MainActivity.kt · AppViewModel.kt · HeyarrConfig.kt (BuildConfig default → Settings override)
+  MainActivity.kt · HeyarrApp.kt (Application: the app-scoped pairing holder) · AppViewModel.kt · HeyarrConfig.kt (BuildConfig default → Settings override)
   settings/     SettingsStore (SharedPreferences; in-memory for tests) + SettingsScreen
   auth/         Credential (Device/Session header snapshot — Device renders via the library)
   device/       DeviceKeyring (sealed keys + admission: op + ops) · BiometricGate · SealedSecretStore ·
-                EnrolScreen + EnrolClient (join a v3 invite, register with ops) · MembershipOps
+                EnrolScreen + EnrolClient (join a v3 invite, register with ops) · PairingCoordinator (app-scoped
+                join→SAS→admission→enrol state machine, keyed by session) + DevicePairingSteps + PatientRelayTransport
+                (poll to the relay TTL) + PairingForegroundService + PrefsPendingPairingStore · MembershipOps
                 (what to present, ≤ 64) · MembershipClient (GET /membership/{usr}) · HandoffLauncher
   login/        QR login over voidbind-client (LoginTuple façade, QrLoginClient, VoidbindHandoff, screen)
   library/      LibraryClient (native /api/v1/works, paged, recent-first) + WorksJson + SubsonicClient stub

@@ -2,7 +2,9 @@ package one.rarebit.heyarr.mobile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,9 +16,13 @@ import one.rarebit.heyarr.mobile.device.DeviceKeyInfo
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
 import one.rarebit.heyarr.mobile.device.EnrolClient
 import one.rarebit.heyarr.mobile.device.EnrolUiState
+import one.rarebit.heyarr.mobile.device.InMemoryPendingPairingStore
 import one.rarebit.heyarr.mobile.device.MembershipClient
 import one.rarebit.heyarr.mobile.device.MembershipOps
 import one.rarebit.heyarr.mobile.device.PairInvite
+import one.rarebit.heyarr.mobile.device.PairingCoordinator
+import one.rarebit.heyarr.mobile.device.PairingState
+import one.rarebit.heyarr.mobile.device.PairingSteps
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.LibraryUiState
 import one.rarebit.heyarr.mobile.library.Work
@@ -38,11 +44,19 @@ import one.rarebit.voidbind.Membership
 import one.rarebit.voidbind.MembershipOp
 import one.rarebit.voidbind.auth.DeviceCredential
 import one.rarebit.voidbind.auth.PossessionProof
-import one.rarebit.voidbind.flow.DevicePairing
-import one.rarebit.voidbind.net.HttpTransport as VoidbindHttpTransport
+import one.rarebit.voidbind.flow.PairingFailureKind
+import one.rarebit.voidbind.flow.PairingOutcome
 
 /** A resolved item the player is showing: its stream target and a display title. */
 data class NowPlaying(val target: PlaybackTarget, val title: String)
+
+/** The steps of a ViewModel built without the app's holder (tests): every pairing fails honestly. */
+private object UnavailablePairingSteps : PairingSteps {
+    private val failed = PairingOutcome.Failed(PairingFailureKind.PROTOCOL, "pairing is not available in this build", "")
+    override suspend fun handshake(inviteQr: String, deadlineMillis: Long): PairingOutcome<String> = failed
+    override suspend fun receive(deadlineMillis: Long): PairingOutcome<String> = failed
+    override suspend fun register(op: String): EnrolClient.Outcome = EnrolClient.Outcome.Failed("pairing is not available in this build")
+}
 
 /**
  * Drives the QR login, holds the resulting Bearer session token as a [Credential],
@@ -59,8 +73,16 @@ class AppViewModel(
     private val loginFactory: (baseUrl: String) -> VoidbindLogin = { base ->
         QrLoginClient(http = OkHttpTransport(), rpBase = base)
     },
-    /** voidbind-client's transport (the pairing relay); injected for tests. */
-    private val voidbindTransport: VoidbindHttpTransport = OkHttpVoidbindTransport(),
+    /**
+     * The app-scoped pairing holder ([one.rarebit.heyarr.mobile.HeyarrApp.pairing] on
+     * the phone): the join → SAS → admission → `/enrol` pipeline outlives this
+     * ViewModel; it only observes and drives it. The default cannot pair (tests).
+     */
+    private val pairing: PairingCoordinator = PairingCoordinator(
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        store = InMemoryPendingPairingStore(),
+        steps = { UnavailablePairingSteps },
+    ),
 ) : ViewModel() {
 
     /**
@@ -215,9 +237,59 @@ class AppViewModel(
     private val _deviceInfo = MutableStateFlow<DeviceKeyInfo?>(null)
     val deviceInfo: StateFlow<DeviceKeyInfo?> = _deviceInfo.asStateFlow()
 
-    /** An in-flight pairing (this device is the relay responder). */
-    private var pairing: DevicePairing? = null
-    private var handshake: DevicePairing.Handshake? = null
+    /** True while [enrolState] is a projection of the coordinator's (non-idle) state. */
+    private var showingPairing = false
+
+    init {
+        // The Enrol screen's state is a projection of the app-scoped pairing wherever
+        // one is in flight or just ended; the resting states (keys / no keys / adopted)
+        // are this ViewModel's own.
+        viewModelScope.launch { pairing.state.collect { reflectPairing(it) } }
+    }
+
+    /** What the Enrol screen shows when no pairing is in flight. */
+    private fun restingState(info: DeviceKeyInfo? = _deviceInfo.value): EnrolUiState = when {
+        info == null -> EnrolUiState.Unprovisioned
+        info.certToken != null -> EnrolUiState.Enrolled(info, "This device holds an admission.", needsAdmin = false)
+        else -> EnrolUiState.Ready(info)
+    }
+
+    private suspend fun reflectPairing(ps: PairingState) {
+        val info = _deviceInfo.value
+        when (ps) {
+            PairingState.Idle -> if (showingPairing) {
+                showingPairing = false
+                _enrolState.value = restingState()
+            }
+            is PairingState.Joining -> {
+                info ?: return
+                showingPairing = true
+                _enrolState.value = EnrolUiState.Joining(info, ps.inviteQr, ps.sameDevice, ps.deadlineMillis)
+            }
+            is PairingState.CompareSas -> {
+                info ?: return
+                showingPairing = true
+                _enrolState.value = EnrolUiState.CompareSas(info, ps.sas, ps.sameDevice, ps.deadlineMillis, ps.awaitingAdmission)
+            }
+            is PairingState.Registering -> {
+                info ?: return
+                showingPairing = true
+                _enrolState.value = EnrolUiState.Registering(info)
+            }
+            is PairingState.Enrolled -> {
+                showingPairing = true
+                val ring = keyring
+                val fresh = if (ring != null) withContext(Dispatchers.IO) { runCatching { ring.info() }.getOrNull() } else null
+                val shown = fresh ?: info ?: return
+                _deviceInfo.value = shown
+                _enrolState.value = EnrolUiState.Enrolled(shown, ps.registration, ps.needsAdmin, retriable = ps.retriable)
+            }
+            is PairingState.Failed -> {
+                showingPairing = true
+                _enrolState.value = EnrolUiState.Error(info, ps.message, ps.kind)
+            }
+        }
+    }
 
     /**
      * An invite that arrived by deep link from Cruciform on this phone
@@ -251,6 +323,9 @@ class AppViewModel(
                     info.certToken != null -> adoptDevice(ring, info.certToken)
                     else -> {
                         _enrolState.value = EnrolUiState.Ready(info)
+                        // A pairing already in flight / just ended in the app-scoped holder
+                        // (a recreation, or a restart reporting an interrupted one) wins.
+                        if (pairing.state.value !is PairingState.Idle) reflectPairing(pairing.state.value)
                         continueParkedInvite()
                     }
                 }
@@ -278,9 +353,8 @@ class AppViewModel(
                 return
             }
         }
-        // A new link supersedes any in-flight join of an older one.
-        pairing = null
-        handshake = null
+        // A new link supersedes any in-flight join of an older one; the SAME link (Android
+        // re-delivers the launching intent on a recreation) is a no-op in the coordinator.
         when (val state = _enrolState.value) {
             is EnrolUiState.Ready -> {
                 _parkedInvite.value = null
@@ -338,6 +412,7 @@ class AppViewModel(
             result.onSuccess { info ->
                 _deviceInfo.value = info
                 _enrolState.value = EnrolUiState.Ready(info)
+                if (pairing.state.value !is PairingState.Idle) reflectPairing(pairing.state.value)
                 continueParkedInvite()
             }.onFailure {
                 _enrolState.value = EnrolUiState.Error(null, "could not create the device key: ${it.message}")
@@ -393,7 +468,7 @@ class AppViewModel(
      * and confirm there, rather than to look at "the other device".
      */
     private fun joinPairing(inviteQr: String, sameDevice: Boolean) {
-        val ring = keyring ?: return
+        if (keyring == null) return
         val info = _deviceInfo.value ?: return
         val invite = when (val checked = PairInvite.check(inviteQr)) {
             is PairInvite.Valid -> checked.inviteQr
@@ -402,86 +477,33 @@ class AppViewModel(
                 return
             }
         }
-        viewModelScope.launch {
-            _enrolState.value = EnrolUiState.Joining(info, invite, sameDevice)
-            runHandshake(ring, info, invite, sameDevice)
-        }
-    }
-
-    private suspend fun runHandshake(ring: DeviceKeyring, info: DeviceKeyInfo, inviteQr: String, sameDevice: Boolean) {
-        val result = withContext(Dispatchers.IO) {
-            runCatching {
-                val p = DevicePairing(voidbindTransport, ring.identity(), clock = ::nowSeconds)
-                p to p.begin(inviteQr)
-            }
-        }
-        result.onSuccess { (p, h) ->
-            pairing = p
-            handshake = h
-            _enrolState.value = EnrolUiState.CompareSas(info, h.sas, sameDevice)
-        }.onFailure {
-            _enrolState.value = EnrolUiState.Error(info, "pairing handshake failed: ${it.message}")
-        }
+        // The pipeline runs in the app-scoped holder, keyed by the invite's session id;
+        // this ViewModel's enrolState follows it (reflectPairing).
+        pairing.start(invite, sameDevice)
     }
 
     /**
-     * The human saw the SAME code on both screens: receive the admission — this
-     * device's add op plus the ops that authorise it — store BOTH (the op is the
-     * credential token, the ops the replica), register at the node presenting those
-     * ops, adopt.
+     * The human saw the SAME code on both screens. The holder then waits — up to the
+     * relay session's TTL, SAS still on screen — for the admission Cruciform seals to
+     * this device after the human confirms THERE, stores both halves (the op is the
+     * credential token, the ops the replica) and registers at the node presenting
+     * those ops (`POST /enrol`).
      */
-    fun confirmSas() {
-        val ring = keyring ?: return
-        val p = pairing ?: return
-        val h = handshake ?: return
-        val info = _deviceInfo.value
-        viewModelScope.launch {
-            _enrolState.value = EnrolUiState.Loading
-            val outcome = withContext(Dispatchers.IO) {
-                runCatching {
-                    val admission = p.confirm(h)
-                    ring.saveAdmission(admission)
-                    val identity = ring.identity()
-                    val proof = PossessionProof.mint(admission.op, identity.asSigner(), nowSeconds())
-                    EnrolClient(rawTransport, config.baseUrl).register(
-                        admission.op, proof, deviceName, credential,
-                        ops = MembershipOps.presentable(ring.knownOps(), admission.op),
-                    )
-                }
-            }
-            pairing = null
-            handshake = null
-            outcome.onSuccess { reg ->
-                val fresh = withContext(Dispatchers.IO) { ring.info() }
-                _deviceInfo.value = fresh
-                val (text, needsAdmin) = when (reg) {
-                    is EnrolClient.Outcome.Registered -> "Registered with the node via ${reg.via}." to false
-                    is EnrolClient.Outcome.NeedsAdmin ->
-                        ("The admission is stored, but the node does not know it yet (${reg.reason}). An admin " +
-                            "must register it: POST /api/v1/identities/devices {\"cert\":…,\"name\":…}.") to true
-                    is EnrolClient.Outcome.Failed -> "Registration failed: ${reg.message}" to true
-                }
-                _enrolState.value = EnrolUiState.Enrolled(fresh, text, needsAdmin)
-            }.onFailure {
-                _enrolState.value = EnrolUiState.Error(info, "enrolment failed: ${it.message}")
-            }
-        }
-    }
+    fun confirmSas() = pairing.confirmMatch()
 
     /** The codes differ — abort; nothing was signed or received. */
-    fun rejectSas() {
-        pairing = null
-        handshake = null
-        _enrolState.value = EnrolUiState.Error(_deviceInfo.value, "Security codes differed — pairing aborted. Nothing was exchanged.")
-    }
+    fun rejectSas() = pairing.rejectMatch()
+
+    /** Give up on the pairing in flight (the relay wait) and go back to the resting screen. */
+    fun cancelPairing() = pairing.cancel()
+
+    /** `POST /enrol` again for a stored admission the node has not accepted (e.g. the proof could not be signed in the background). */
+    fun registerDevice() = pairing.retryRegister()
 
     fun retryEnrol() {
-        pairing = null
-        handshake = null
-        val info = _deviceInfo.value
-        _enrolState.value = if (info == null) EnrolUiState.Unprovisioned else if (info.certToken != null) {
-            EnrolUiState.Enrolled(info, "This device holds an admission.", false)
-        } else EnrolUiState.Ready(info)
+        pairing.dismiss()
+        showingPairing = false
+        _enrolState.value = restingState()
     }
 
     /**
@@ -525,12 +547,16 @@ class AppViewModel(
     fun useDeviceCredential() {
         val ring = keyring ?: return
         val cert = _deviceInfo.value?.certToken ?: return
+        pairing.dismiss()
+        showingPairing = false
         viewModelScope.launch { adoptDevice(ring, cert) }
     }
 
     /** Drop the stored admission (keys stay) and fall back to QR login. */
     fun forgetDevice() {
         val ring = keyring ?: return
+        pairing.cancel()
+        showingPairing = false
         viewModelScope.launch {
             withContext(Dispatchers.IO) { runCatching { ring.clearCert() } }
             deviceCredential = null
