@@ -80,7 +80,11 @@ appends the voidbind-go relay wire itself, `POST {base}/v1/sessions`, `PUT|GET
 `voidbind:pair?…` invite as a QR **and** an "Open in Voidbind" hand-off, waits for the
 authorising side (the Voidbind app on the same phone, or `voidbind pair-initiate` on a
 machine holding the user identity), shows the 7-digit SAS, and on "codes match" receives
-the sealed cert. It can also join an invite the other side created (paste). Then
+the sealed cert. It can also **join** an invite the other side created — the Mac's
+`voidbind pair-initiate` QR **scanned with the camera** (`device/QrScanner`: CameraX +
+ML Kit, the same stack as voidbind-kmp's androidApp; CAMERA runtime permission) or
+pasted — gated by `device/PairInvite` (the library's `Invite.decode`, never a re-derived
+parser; non-invites are refused with a reason and the scanner keeps looking). Then
 `device/EnrolClient` tries `POST /enrol {cert, proof, name}` (planned self-enrol) and,
 if absent, `POST /api/v1/identities/devices` (admin) — surfacing the cert for an operator
 when neither works, never pretending. **Known server gaps:** heyarr-core's legacy

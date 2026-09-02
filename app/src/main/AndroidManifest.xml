@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- The device signing key's hardware wrapping key is user-presence gated (BiometricPrompt). -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- The camera scans the `voidbind:pair?…` invite QR the Mac prints during enrolment.
+         Optional so the app still installs on camera-less devices; Enrol keeps the paste path. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- Package visibility (Android 11+): let us resolve the Voidbind authenticator for the
          same-phone `voidbind:` hand-off, so the "Approve on this phone" / "Open in Voidbind"

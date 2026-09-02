@@ -17,6 +17,7 @@ import one.rarebit.heyarr.mobile.device.DeviceKeyInfo
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
 import one.rarebit.heyarr.mobile.device.EnrolClient
 import one.rarebit.heyarr.mobile.device.EnrolUiState
+import one.rarebit.heyarr.mobile.device.PairInvite
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.LibraryUiState
 import one.rarebit.heyarr.mobile.library.Work
@@ -298,13 +299,25 @@ class AppViewModel(
         }
     }
 
-    /** Join a pairing the authorising side started (a pasted `voidbind:pair?…` invite). */
+    /**
+     * Join a pairing the authorising side started — the `voidbind:pair?…` invite the Mac
+     * printed, scanned with the camera or pasted. Re-checked here through the library's
+     * parser ([PairInvite]) even though the screen already did, so a caller can never
+     * push a non-invite into the handshake.
+     */
     fun joinPairing(inviteQr: String) {
         val ring = keyring ?: return
         val info = _deviceInfo.value ?: return
+        val invite = when (val checked = PairInvite.check(inviteQr)) {
+            is PairInvite.Valid -> checked.inviteQr
+            is PairInvite.Invalid -> {
+                _enrolState.value = EnrolUiState.Error(info, checked.message)
+                return
+            }
+        }
         viewModelScope.launch {
-            _enrolState.value = EnrolUiState.Inviting(info, inviteQr)
-            runHandshake(ring, info, inviteQr)
+            _enrolState.value = EnrolUiState.Inviting(info, invite, joined = true)
+            runHandshake(ring, info, invite)
         }
     }
 
