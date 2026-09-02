@@ -22,10 +22,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,17 +53,44 @@ sealed interface EnrolUiState {
      * and is connecting to the relay it names to run the handshake. [inviteQr] is the
      * `voidbind:pair?…` tuple (v3: it carries the identity, `usr`).
      */
-    data class Joining(val info: DeviceKeyInfo, val inviteQr: String, val sameDevice: Boolean = false) : EnrolUiState
+    data class Joining(
+        val info: DeviceKeyInfo,
+        val inviteQr: String,
+        val sameDevice: Boolean = false,
+        /** When the relay session expires (wall-clock millis; 0 = unknown) — the countdown. */
+        val deadlineMillis: Long = 0L,
+    ) : EnrolUiState
 
     /**
      * Handshake done: show the SAS for the human to compare on both screens. [sameDevice]
      * when the invite came from Cruciform on THIS phone (voidbind-kmp ADR-0006) — the
-     * other screen is one app-switch away, and the confirm happens there.
+     * other screen is one app-switch away, and the confirm happens there. After
+     * "codes match", [awaitingAdmission]: the SAS stays up while this phone waits (until
+     * [deadlineMillis]) for the admission Cruciform seals once the human confirms there.
      */
-    data class CompareSas(val info: DeviceKeyInfo, val sas: String, val sameDevice: Boolean = false) : EnrolUiState
+    data class CompareSas(
+        val info: DeviceKeyInfo,
+        val sas: String,
+        val sameDevice: Boolean = false,
+        val deadlineMillis: Long = 0L,
+        val awaitingAdmission: Boolean = false,
+    ) : EnrolUiState
 
-    /** The admission was delivered, verified and stored; [registration] says whether the node knows it yet. */
-    data class Enrolled(val info: DeviceKeyInfo, val registration: String, val needsAdmin: Boolean) : EnrolUiState
+    /** The admission is stored; `POST /enrol` is in flight. */
+    data class Registering(val info: DeviceKeyInfo) : EnrolUiState
+
+    /**
+     * The admission was delivered, verified and stored; [registration] says whether the
+     * node knows it yet. [retriable]: registering failed for a reason a second attempt
+     * could fix (the node unreachable, or the possession proof could not be signed while
+     * the app was in the background), as opposed to a node that [needsAdmin].
+     */
+    data class Enrolled(
+        val info: DeviceKeyInfo,
+        val registration: String,
+        val needsAdmin: Boolean,
+        val retriable: Boolean = false,
+    ) : EnrolUiState
 
     /**
      * The node refused this device's credential and, on re-reading the identity's
@@ -70,7 +100,50 @@ sealed interface EnrolUiState {
      */
     data class Removed(val info: DeviceKeyInfo, val message: String) : EnrolUiState
 
-    data class Error(val info: DeviceKeyInfo?, val message: String) : EnrolUiState
+    /** [kind] classifies a pairing failure (relay unreachable vs. timed out vs. …); null for anything else. */
+    data class Error(val info: DeviceKeyInfo?, val message: String, val kind: PairingFailure? = null) : EnrolUiState
+}
+
+/** `m:ss` left until [deadlineMillis], floored at zero — the relay session countdown. */
+internal fun countdownText(deadlineMillis: Long, nowMillis: Long): String {
+    val left = ((deadlineMillis - nowMillis).coerceAtLeast(0L) + 999) / 1000
+    return "%d:%02d".format(left / 60, left % 60)
+}
+
+/** A title for a pairing failure the human can act on; the message says the rest. */
+internal fun failureTitle(kind: PairingFailure?): String = when (kind) {
+    PairingFailure.UNREACHABLE -> "Couldn't reach the relay"
+    PairingFailure.TIMEOUT -> "Cruciform didn't answer in time"
+    PairingFailure.REJECTED -> "The relay refused this invite"
+    PairingFailure.PROTOCOL -> "The pairing didn't check out"
+    PairingFailure.MISMATCH -> "Codes differed — aborted"
+    PairingFailure.INTERRUPTED -> "The pairing was interrupted"
+    PairingFailure.EXPIRED -> "The pairing expired"
+    PairingFailure.INVALID -> "Not a pairing invite"
+    null -> "Something went wrong"
+}
+
+/** `<prefix>m:ss<suffix>` — the relay-session countdown, ticking with [now]. */
+@Composable
+private fun CountdownLine(prefix: String, deadlineMillis: Long, now: Long, suffix: String) {
+    Text(
+        prefix + countdownText(deadlineMillis, now) + suffix,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** Ticks once a second while composed, for the countdowns. */
+@Composable
+private fun rememberNowMillis(): Long {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000)
+            now = System.currentTimeMillis()
+        }
+    }
+    return now
 }
 
 /**
@@ -101,7 +174,12 @@ fun EnrolScreen(
     /** An invite from Cruciform on this phone waiting for the device key (see [AppViewModel.receiveInviteLink]). */
     parkedInvite: String? = null,
     onDiscardParked: () -> Unit = {},
+    /** Give up on the relay wait in flight (Joining, or awaiting the admission). */
+    onCancelPairing: () -> Unit = {},
+    /** `POST /enrol` again for a stored admission the node has not accepted yet. */
+    onRegister: () -> Unit = {},
 ) {
+    val now = rememberNowMillis()
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -118,6 +196,7 @@ fun EnrolScreen(
             is EnrolUiState.Ready -> state.info
             is EnrolUiState.Joining -> state.info
             is EnrolUiState.CompareSas -> state.info
+            is EnrolUiState.Registering -> state.info
             is EnrolUiState.Enrolled -> state.info
             is EnrolUiState.Removed -> state.info
             is EnrolUiState.Error -> state.info
@@ -130,6 +209,10 @@ fun EnrolScreen(
             EnrolUiState.Loading -> {
                 CircularProgressIndicator()
                 Text("Preparing the device key… confirm the prompt if asked.")
+            }
+            is EnrolUiState.Registering -> {
+                CircularProgressIndicator()
+                Text("Admission received and stored. Registering with the node (POST /enrol)… confirm the prompt if asked.")
             }
             EnrolUiState.Unprovisioned -> {
                 Text("No device key yet", style = MaterialTheme.typography.titleMedium)
@@ -170,6 +253,14 @@ fun EnrolScreen(
                     fontFamily = FontFamily.Monospace,
                 )
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                if (state.deadlineMillis > 0) {
+                    CountdownLine(
+                        (if (state.sameDevice) "Cruciform" else "The other device") + " has ",
+                        state.deadlineMillis, now,
+                        " left to answer — this keeps waiting even if you switch apps.",
+                    )
+                }
+                OutlinedButton(onClick = onCancelPairing) { Text("Cancel pairing") }
             }
             is EnrolUiState.CompareSas -> {
                 Text("Compare the security code", style = MaterialTheme.typography.titleMedium)
@@ -183,14 +274,34 @@ fun EnrolScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 SasCard(state.sas)
-                Text(
-                    "Tap \"Codes match\" only if both show the SAME number — that comparison " +
-                        "is what stops an attacker on the network from standing in the middle.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = onSasMatches) { Text("Codes match") }
-                    OutlinedButton(onClick = onSasMismatch) { Text("They differ") }
+                if (state.awaitingAdmission) {
+                    Text(
+                        if (state.sameDevice) {
+                            "Waiting for Cruciform to approve. Switch to it, confirm with your fingerprint, and come " +
+                                "back — this finishes on its own, even while you're over there."
+                        } else {
+                            "Waiting for the other device to approve — confirm there."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                    if (state.deadlineMillis > 0) {
+                        CountdownLine("", state.deadlineMillis, now, " left before the relay session expires.")
+                    }
+                    OutlinedButton(onClick = onCancelPairing) { Text("Cancel pairing") }
+                } else {
+                    Text(
+                        "Tap \"Codes match\" only if both show the SAME number — that comparison " +
+                            "is what stops an attacker on the network from standing in the middle.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = onSasMatches) { Text("Codes match") }
+                        OutlinedButton(onClick = onSasMismatch) { Text("They differ") }
+                    }
+                    if (state.deadlineMillis > 0) {
+                        CountdownLine("", state.deadlineMillis, now, " left before the relay session expires.")
+                    }
                 }
             }
             is EnrolUiState.Enrolled -> {
@@ -209,6 +320,7 @@ fun EnrolScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (state.retriable) Button(onClick = onRegister) { Text("Register again") }
                     Button(onClick = onDone) { Text("Continue") }
                     OutlinedButton(onClick = onForget) { Text("Forget enrolment") }
                 }
@@ -225,7 +337,8 @@ fun EnrolScreen(
                 OutlinedButton(onClick = onForget) { Text("Forget enrolment") }
             }
             is EnrolUiState.Error -> {
-                Text(state.message, color = MaterialTheme.colorScheme.error)
+                Text(failureTitle(state.kind), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+                Text(state.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 Button(onClick = onRetry) { Text("Try again") }
             }
         }

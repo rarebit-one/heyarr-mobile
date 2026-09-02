@@ -1,9 +1,14 @@
 package one.rarebit.heyarr.mobile
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import one.rarebit.heyarr.mobile.device.EnrolUiState
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -77,6 +82,16 @@ class MainActivity : FragmentActivity() {
     private var linkedInvite by mutableStateOf<LinkedInvite?>(null)
     private var linkSeq = 0
 
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best effort */ }
+
+    /** Ask for POST_NOTIFICATIONS once a pairing starts, so its foreground notice can show. */
+    private fun ensureNotificationPermission() {
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!granted) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -100,23 +115,34 @@ class MainActivity : FragmentActivity() {
         // This phone's device keys, biometric-gated through this activity. Attached
         // once per activity; the ViewModel outlives rotations and keeps the session.
         val keyring = DeviceKeyring(this, AndroidBiometricGate(this))
+        val app = application as HeyarrApp
+        // The app-scoped pairing holder signs (the possession proof) through the keyring
+        // of the Activity in front — this one, until the next create replaces it.
+        app.deviceKeyring = keyring
+        app.deviceName = "heyarr-mobile on ${android.os.Build.MODEL}"
         val voidbindInstalled = HandoffLauncher.canOpen(this, "voidbind:login?id=probe&rp=probe")
         setContent {
             MaterialTheme {
                 val vm: AppViewModel = viewModel(
                     factory = viewModelFactory {
-                        initializer { AppViewModel(settings = PrefsSettingsStore(appContext)) }
+                        initializer { AppViewModel(settings = PrefsSettingsStore(appContext), pairing = app.pairing) }
                     },
                 )
                 LaunchedEffect(vm) {
-                    vm.deviceName = "heyarr-mobile on ${android.os.Build.MODEL}"
+                    vm.deviceName = app.deviceName
+                    app.credentialProvider = { vm.credentialOrNull() }
                     vm.attachDevice(keyring)
+                }
+                // The "Pairing with Cruciform…" foreground-service notification needs this
+                // on Android 13+; the service runs regardless, the notice just stays hidden.
+                val enrolState by vm.enrolState.collectAsStateWithLifecycle()
+                LaunchedEffect(enrolState is EnrolUiState.Joining) {
+                    if (enrolState is EnrolUiState.Joining) ensureNotificationPermission()
                 }
                 val loginState by vm.loginState.collectAsStateWithLifecycle()
                 val config by vm.configState.collectAsStateWithLifecycle()
                 var showSettings by rememberSaveable { mutableStateOf(false) }
                 var showEnrol by rememberSaveable { mutableStateOf(false) }
-                val enrolState by vm.enrolState.collectAsStateWithLifecycle()
                 val parkedInvite by vm.parkedInvite.collectAsStateWithLifecycle()
                 val context = LocalContext.current
 
@@ -163,6 +189,8 @@ class MainActivity : FragmentActivity() {
                             modifier = Modifier.padding(padding),
                             parkedInvite = parkedInvite,
                             onDiscardParked = vm::discardParkedInvite,
+                            onCancelPairing = vm::cancelPairing,
+                            onRegister = vm::registerDevice,
                         )
                     }
                 } else {
@@ -354,6 +382,8 @@ private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, focus
                 modifier = content,
                 parkedInvite = parkedInvite,
                 onDiscardParked = vm::discardParkedInvite,
+                onCancelPairing = vm::cancelPairing,
+                onRegister = vm::registerDevice,
             )
         }
     }
