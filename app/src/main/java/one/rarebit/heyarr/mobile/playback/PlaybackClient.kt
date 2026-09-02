@@ -92,9 +92,19 @@ class PlaybackClient(
         else baseUrl.trimEnd('/') + "/" + url.trimStart('/')
 
     companion object {
-        /** Pure, tested: the range-capable content URL for a blob hash. */
-        fun blobContentUrl(baseUrl: String, hash: String): String =
-            baseUrl.trimEnd('/') + "/api/v1/blobs/" + java.net.URLEncoder.encode(hash, "UTF-8") + "/content"
+        /**
+         * Pure, tested: the range-capable content URL for a blob hash. The hash is
+         * `blake3:<64 lowercase hex>` and goes into the path VERBATIM — the server
+         * validates that exact shape and answers 400 to a percent-encoded colon
+         * (`blake3%3A…`), which is how every playback used to fail against a live node.
+         * Anything outside that alphabet is refused here rather than encoded.
+         */
+        fun blobContentUrl(baseUrl: String, hash: String): String {
+            require(BLOB_HASH.matches(hash)) { "not a blob hash: $hash" }
+            return baseUrl.trimEnd('/') + "/api/v1/blobs/" + hash + "/content"
+        }
+
+        private val BLOB_HASH = Regex("^blake3:[0-9a-f]{64}$")
 
         /** Pure, tested: the playback-negotiation endpoint (write path). */
         fun playbackUrl(baseUrl: String): String =

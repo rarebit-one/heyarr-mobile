@@ -27,8 +27,8 @@ class PlaybackClientTest {
 
     @Test fun blobTargetPointsAtRangeCapableUrlUnderCredential() {
         val client = PlaybackClient(RecordingTransport(HttpResponse(200, "")), "https://h.example/", Credential.Session("tok"))
-        val target = client.blobTarget("deadbeef", isVideo = true, mimeType = "video/mp4")
-        assertEquals("https://h.example/api/v1/blobs/deadbeef/content", target.contentUrl)
+        val target = client.blobTarget("blake3:a617353faeec5b99c042ceb349976d8171e5b7efc6fb1924fbc8b0d605ad8c9e", isVideo = true, mimeType = "video/mp4")
+        assertEquals("https://h.example/api/v1/blobs/blake3:a617353faeec5b99c042ceb349976d8171e5b7efc6fb1924fbc8b0d605ad8c9e/content", target.contentUrl)
         assertEquals("Bearer tok", target.authHeaders()["Authorization"])
         assertTrue(target.isVideo)
         assertEquals("video/mp4", target.mimeType)
