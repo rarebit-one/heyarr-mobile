@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext policy. The live Bartley Ridge node speaks plain HTTP on the LAN
+  (http://192.168.16.224:7777) and the weblogin `rp` origin it returns is http://,
+  so QR login must be allowed over cleartext to THAT host. Everything else stays
+  HTTPS-only in release builds. The debug source set overrides this file to allow
+  cleartext everywhere, so the in-app base-URL override works against any LAN host
+  during development.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- The build-default node (BuildConfig.HEYARR_BASE_URL). -->
+        <domain includeSubdomains="false">192.168.16.224</domain>
+        <!-- Local dev: emulator host loopback + localhost. -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

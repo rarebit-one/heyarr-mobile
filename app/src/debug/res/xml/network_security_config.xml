@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds: allow cleartext to any host so the Settings base-URL override can
+     point at any LAN / Tailscale node. Release uses src/main's allow-list. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
