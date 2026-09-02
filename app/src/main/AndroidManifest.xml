@@ -47,6 +47,17 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="heyarr-mobile" android:host="login" />
             </intent-filter>
+            <!-- `heyarr-mobile://pair?invite=<encoded voidbind:pair tuple>` — the REVERSE
+                 same-phone handoff (voidbind-kmp ADR-0006): Cruciform's "Add a device" hands
+                 us the invite it minted, since we can't scan the screen we share. Routed by
+                 device/PairDeepLink into the same join path a scan takes; the SAS is then
+                 confirmed on Cruciform. singleTop: a warm app gets it via onNewIntent. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="heyarr-mobile" android:host="pair" />
+            </intent-filter>
         </activity>
     </application>
 
