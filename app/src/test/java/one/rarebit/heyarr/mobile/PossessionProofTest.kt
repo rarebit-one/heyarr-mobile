@@ -1,10 +1,11 @@
 package one.rarebit.heyarr.mobile
 
 import one.rarebit.heyarr.mobile.auth.Credential
-import one.rarebit.heyarr.mobile.auth.DeviceCredential
-import one.rarebit.heyarr.mobile.auth.PossessionProof
 import one.rarebit.voidbind.Cert
+import one.rarebit.voidbind.Ed25519Signer
 import one.rarebit.voidbind.Ed25519Verifier
+import one.rarebit.voidbind.auth.DeviceCredential
+import one.rarebit.voidbind.auth.PossessionProof
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -47,8 +48,11 @@ object JdkEd25519 {
  * Cross-language vectors against the Go implementation heyarr-core runs
  * (voidbind-go v0.5.0 `enrolment`). Both were minted by the real Go code with fixed
  * seeds and clocks (Ed25519 is deterministic), so a byte-for-byte match here proves
- * the app's proof is what `deviceauth.Verify` accepts. If a constant ever has to
- * change to make this pass, the wire format broke — stop and investigate.
+ * the proof this app presents is what `deviceauth.Verify` accepts. The implementation
+ * is voidbind-client's `auth/` (since 0.4.0 — the app's own port was deleted); these
+ * vectors stay HERE so a library bump that drifts the wire format fails this app's
+ * CI, not just the library's. If a constant ever has to change to make this pass,
+ * the wire format broke — stop and investigate.
  */
 class PossessionProofTest {
 
@@ -67,7 +71,7 @@ class PossessionProofTest {
     private val deviceSeedB = JdkEd25519.hex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
     private val nowB = 1_788_350_400L
 
-    private fun prover(seed: ByteArray) = DeviceCredential.Prover { JdkEd25519.sign(seed, it) }
+    private fun signer(seed: ByteArray) = Ed25519Signer { JdkEd25519.sign(seed, it) }
 
     @Test fun signingBytesMatchGoJson() {
         assertEquals(
@@ -78,17 +82,19 @@ class PossessionProofTest {
     }
 
     @Test fun mintsTheExactGoProof_vectorA() {
-        assertEquals(proofA, PossessionProof.mint(certA, nowA, sign = prover(deviceSeedA)::sign))
+        assertEquals(proofA, PossessionProof.mint(certA, signer(deviceSeedA), nowA))
     }
 
     @Test fun mintsTheExactGoProof_vectorB() {
-        assertEquals(proofB, PossessionProof.mint(certB, nowB, sign = prover(deviceSeedB)::sign))
+        assertEquals(proofB, PossessionProof.mint(certB, signer(deviceSeedB), nowB))
     }
 
     @Test fun fullCredentialMatchesTheVector() {
-        val cred = DeviceCredential.mint(certB, prover(deviceSeedB), nowB)
-        assertEquals("Device $certB~$proofB", cred.headerValue())
-        val (c, p) = DeviceCredential.parse(DeviceCredential.format(cred.cert, cred.proof))
+        val minted = DeviceCredential.mint(certB, signer(deviceSeedB), nowB)
+        assertEquals("Device $certB~$proofB", minted.headerValue)
+        // The app's own Credential.Device renders through the library — same bytes.
+        assertEquals(minted.headerValue, Credential.Device(minted.cert, minted.proof).headerValue())
+        val (c, p) = DeviceCredential.parse(DeviceCredential.format(minted.cert, minted.proof))
         assertEquals(certB, c); assertEquals(proofB, p)
     }
 

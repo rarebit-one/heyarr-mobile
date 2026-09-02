@@ -28,18 +28,27 @@ This is a **scaffold**: a buildable, tested foundation. Feature work lands as PR
 
 ## Two credential shapes (mobile-client contract, ADR-0048)
 
-- **Primary — `Authorization: Device <cert>~<proof>`** (`auth/Credential.Device`,
-  `auth/DeviceCredential`, `auth/PossessionProof`, `auth/DeviceSession`): an enrolled
-  device's user-signed cert + a fresh **possession proof**, joined by `~`. The proof is
-  a byte-exact port of voidbind-go v0.5.0 `enrolment.SignPossession` (what heyarr-core
-  vendors): `base64url({"v":2,"crt":b64url(sha256(cert)),"iat","exp"}) + "." +
-  base64url(ed25519 sig)`, no padding, no domain label — pinned by two Go-minted
-  golden vectors in `PossessionProofTest`. The signature comes from the phone's
-  **hardware-sealed** Ed25519 key (voidbind-client `DeviceKeyStore`, voidbind-kmp
+- **Primary — `Authorization: Device <cert>~<proof>`** (`auth/Credential.Device`, rendered
+  through voidbind-client's `one.rarebit.voidbind.auth.DeviceCredential`): an enrolled
+  device's user-signed cert + a fresh **possession proof**, joined by `~`. Since
+  voidbind-client **0.4.0** the proof, the `~` join and the re-mint policy are the
+  **library's** (`auth/{PossessionProof, DeviceCredential, DeviceAuthPolicy}`) — the
+  app's own port was deleted, and **nothing under `auth/` here mints or joins anything**.
+  The proof is a byte-exact port of voidbind-go v0.5.0 `enrolment.SignPossession` (what
+  heyarr-core vendors): `base64url({"v":2,"crt":b64url(sha256(cert)),"iat","exp"}) + "." +
+  base64url(ed25519 sig)`, no padding, no domain label — still pinned **in this repo** by
+  the two Go-minted golden vectors in `PossessionProofTest`, so a library bump that drifts
+  the wire fails our CI. The signature comes from the phone's **hardware-sealed** Ed25519
+  key (`DeviceIdentity.asSigner()` over voidbind-client `DeviceKeyStore`, voidbind-kmp
   ADR-0001: software seed sealed by a non-extractable, user-presence-gated AES key —
   StrongBox where present, **TEE on the Nothing Phone**; `device/DeviceKeyring` reports
-  the honest tier). `net/DeviceAuthTransport` keeps the proof fresh and re-mints +
-  retries **once** on a 401 (heyarr's Device refusals are all an undifferentiated 401).
+  the honest tier). `AppViewModel` builds the `DeviceCredential` with a **1 h ttl reused
+  for ttl − skew** (`DEVICE_PROOF_TTL_SECONDS` / `DEVICE_PROOF_REUSE_SECONDS`, passed
+  explicitly as `reuseForSeconds`) so the biometric cadence is one prompt an hour;
+  `net/DeviceAuthTransport` drives `DeviceAuthPolicy.execute` — refresh + retry **once**
+  on a 401 (heyarr's Device refusals are all an undifferentiated 401) — and owns the
+  `Voidbind-Membership` header seam (`MEMBERSHIP_HEADER`, provider-fed, **empty until
+  voidbind-go v0.9.0's membership ops land**).
 - **Bootstrap — `Authorization: Bearer <token>`** (`auth/Credential.Session`): a
   short-lived session token from a **QR** web-login, how a fresh install reaches the
   library before it enrols as a device.
@@ -57,13 +66,13 @@ so it can foreground us) — no second-phone QR dance; the RP is still polled. (
 
 ## voidbind-kmp is consumed as the published `voidbind-client` artifact
 
-`one.rarebit.voidbind:voidbind-client:0.2.1` from GitHub Packages (private; needs a
+`one.rarebit.voidbind:voidbind-client:0.4.0` from GitHub Packages (private; needs a
 `read:packages` token — `settings.gradle.kts` reads `gpr.user`/`gpr.token` gradle
 properties or `GITHUB_ACTOR`/`GITHUB_TOKEN`; CI passes its own token). The library's
 minSdk is 33, so ours is too. **Do not re-derive any Voidbind wire format here** —
-`LoginQr`, `Cert`, `Invite`, `DevicePairing`, `RelayClient`, `MiniJson`, `Base64Url` are
-the library's. The one format the library does not mint is the possession proof
-(`auth/PossessionProof`), ported from voidbind-go with golden vectors. For a local
+`LoginQr`, `Cert`, `Invite`, `DevicePairing`, `RelayClient`, `MiniJson`, `Base64Url`,
+and (since 0.4.0) the `Device`-scheme `auth/` trio — `PossessionProof`, `DeviceCredential`,
+`DeviceAuthPolicy` — are the library's; the app keeps only the golden vectors. For a local
 composite build against an unpublished voidbind-kmp change, see the commented
 `includeBuild` in `settings.gradle.kts`.
 
@@ -108,8 +117,7 @@ unwrap + a local **Personal MCP** (#372/#387) are device-gated follow-ups.
 app/src/main/java/one/rarebit/heyarr/mobile/
   MainActivity.kt · AppViewModel.kt · HeyarrConfig.kt (BuildConfig default → Settings override)
   settings/     SettingsStore (SharedPreferences; in-memory for tests) + SettingsScreen
-  auth/         Credential (Device/Session) · DeviceCredential (~-join, Prover) · PossessionProof
-                (Go-exact proof) · DeviceSession (live proof, re-mint)
+  auth/         Credential (Device/Session header snapshot — Device renders via the library)
   device/       DeviceKeyring (sealed keys + cert) · BiometricGate · SealedSecretStore ·
                 EnrolScreen + EnrolClient (pairing responder, registration) · HandoffLauncher
   login/        QR login over voidbind-client (LoginTuple façade, QrLoginClient, VoidbindHandoff, screen)
@@ -117,7 +125,8 @@ app/src/main/java/one/rarebit/heyarr/mobile/
   playback/     PlaybackClient (blob-stream target + /playback/plan) + Media3 player
                 (HeyarrDataSource auth+Range data source, PlayerScreen, PlaybackTarget/Json)
   personalstate/ PersonalStateClient (opaque spaces sync) + Unwrapper (decrypt-on-device seam)
-  net/          HttpTransport + OkHttp actual · DeviceAuthTransport (Device re-mint/retry) ·
+  net/          HttpTransport + OkHttp actual · DeviceAuthTransport (library DeviceAuthPolicy
+                re-mint/retry + Voidbind-Membership seam) ·
                 OkHttpVoidbindTransport (voidbind-client's seam) · JsonEscapes
 app/src/test/…  pure-JVM unit tests (no Android runtime)
 .github/workflows/android.yml   CI: testDebugUnitTest + assembleDebug on ubuntu-latest

@@ -1,7 +1,7 @@
 package one.rarebit.heyarr.mobile
 
 import one.rarebit.heyarr.mobile.auth.Credential
-import one.rarebit.heyarr.mobile.auth.DeviceCredential
+import one.rarebit.voidbind.auth.DeviceCredential
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
