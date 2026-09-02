@@ -11,8 +11,8 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Package visibility (Android 11+): let us resolve the Voidbind authenticator for the
-         same-phone `voidbind:` hand-off, so the "Approve on this phone" / "Open in Voidbind"
+    <!-- Package visibility (Android 11+): let us resolve the Cruciform authenticator app for the
+         same-phone `voidbind:` hand-off, so the "Approve on this phone" / "Open in Cruciform"
          buttons only show when something actually handles the scheme. -->
     <queries>
         <intent>

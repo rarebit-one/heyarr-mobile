@@ -5,9 +5,9 @@ import android.content.Intent
 import android.net.Uri
 
 /**
- * Fires a `voidbind:` URI at whatever app handles the scheme (the Voidbind
- * authenticator, `one.rarebit.voidbind`, on the same phone). [canOpen] is what the
- * UI uses to show or hide the "Open in Voidbind" / "Approve on this phone" buttons —
+ * Fires a `voidbind:` URI at whatever app handles the scheme (Cruciform, the Voidbind
+ * authenticator app, `one.rarebit.cruciform`, on the same phone). [canOpen] is what the
+ * UI uses to show or hide the "Open in Cruciform" / "Approve on this phone" buttons —
  * the QR stays as the fallback when nothing resolves. Needs the `<queries>` entry in
  * the manifest for package visibility on Android 11+.
  */
