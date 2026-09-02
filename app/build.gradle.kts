@@ -15,6 +15,15 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Where the app points by default: the live Bartley Ridge heyarr node (plain
+        // HTTP on the LAN, reachable via the Tailscale subnet route when out). Override
+        // at build time with `-PheyarrBaseUrl=…` (or in gradle.properties); override at
+        // runtime from the in-app Settings screen (persisted in SharedPreferences).
+        val heyarrBaseUrl = (project.findProperty("heyarrBaseUrl") as String?)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "http://192.168.16.224:7777"
+        buildConfigField("String", "HEYARR_BASE_URL", "\"$heyarrBaseUrl\"")
     }
 
     buildFeatures {
@@ -58,6 +67,10 @@ dependencies {
 
     // HTTP for the login seam, library browse, blob-stream and personal-state fetches.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // QR encoding for the `voidbind:login?…` tuple (pure Java — the BitMatrix half is
+    // JVM-unit-tested; only the Bitmap conversion touches Android).
+    implementation("com.google.zxing:core:3.5.3")
 
     // ── Media3 / ExoPlayer (M10 playback) ───────────────────────────────────────
     // The player itself, the PlayerView (transport controls) and the OkHttp-backed

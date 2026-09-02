@@ -37,6 +37,25 @@ and `LoginQr` tuple byte-for-byte. `settings.gradle.kts` documents a commented
 `includeBuild("../voidbind-kmp")` for local composite builds, and `login/VoidbindLogin.kt` +
 `auth/DeviceCredential.kt` carry the `TODO`s to swap in the real artifact once it exists.
 
+## Pointing it at a node
+
+The base URL resolves **build default → runtime override**:
+
+- **Build default** — `BuildConfig.HEYARR_BASE_URL`, from the gradle property
+  `heyarrBaseUrl` (`-PheyarrBaseUrl=https://…` or `gradle.properties`). Unset, it is the live
+  Bartley Ridge node `http://192.168.16.224:7777` (plain HTTP on the LAN; reachable over the
+  Tailscale subnet route when out).
+- **Runtime override** — the in-app **Settings** screen (gear in the top bar): base URL +
+  quality profile, persisted in SharedPreferences (`settings/SettingsStore`). Saving a changed
+  base URL signs the app out (a session token is only good for the node that minted it).
+
+**Cleartext:** the node's login `rp` origin is `http://`, so the release network-security
+config allows cleartext only to the build-default host (`res/xml/network_security_config.xml`);
+the **debug** build overrides it to allow cleartext everywhere so the override can target any
+LAN host. Login renders the `voidbind:login?…` tuple as a real QR bitmap (ZXing core) with the
+text kept beneath as a fallback; after approval the top bar shows *signed in as … · read-only /
+can write* from `GET /api/v1/session`.
+
 ## Build / test
 
 ```sh
@@ -62,8 +81,6 @@ These need real hardware / a live server and can't be proven in CI:
 - **On-device personal-state decrypt** — the real `Unwrapper` (X25519 ECDH in-enclave → HKDF →
   the space key) + AEAD decryption of opaque changes, and the local **Personal MCP** (#372/#387)
   that reads the decrypted state. **No crypto ships in this repo.**
-- **QR bitmap rendering** — drawing the `voidbind:login?…` tuple as a scannable QR (a
-  QR-encoder dependency); today the tuple is shown as text.
 - **Subsonic/OPDS/DLNA reach** — deciding whether to ship the compat adapters at all vs. leaning
   on the native API; `library/SubsonicClient` marks the fork as a decision, not an omission.
 

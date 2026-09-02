@@ -1,16 +1,25 @@
 package one.rarebit.heyarr.mobile.login
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
@@ -29,9 +38,8 @@ sealed interface LoginUiState {
  * authenticator (voidbind-kmp) to scan; on approval the app holds a Bearer session
  * token and shows the library.
  *
- * SCAFFOLD: the tuple is shown as text. Rendering it as a real QR **bitmap** needs a
- * QR-encoding dependency and is a follow-up (README) — the login state machine and
- * the tuple contract are what this scaffold lands.
+ * The tuple is rendered as a real QR bitmap ([QrCode], ZXing) with the raw text kept
+ * beneath it as a fallback for copy/paste or a phone that cannot scan.
  */
 @Composable
 fun LoginScreen(
@@ -69,12 +77,12 @@ fun LoginScreen(
                     "Scan this with your authenticator:",
                     modifier = Modifier.padding(top = 16.dp),
                 )
-                // TODO(qr-render): draw state.qrTuple as a QR bitmap (follow-up).
+                QrImage(state.qrTuple, modifier = Modifier.padding(top = 16.dp))
                 Text(
                     state.qrTuple,
                     style = MaterialTheme.typography.bodySmall,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = 12.dp),
                 )
             }
             is LoginUiState.Approved -> {
@@ -82,4 +90,21 @@ fun LoginScreen(
             }
         }
     }
+}
+
+private val QR_SIZE = 240.dp
+
+/** The login tuple as a QR bitmap, sized in dp and rendered pixel-sharp. */
+@Composable
+private fun QrImage(tuple: String, modifier: Modifier = Modifier) {
+    val density = LocalDensity.current
+    val px = with(density) { QR_SIZE.roundToPx() }
+    val image = remember(tuple, px) { QrCode.bitmap(tuple, px).asImageBitmap() }
+    Image(
+        bitmap = image,
+        contentDescription = "Voidbind login QR code",
+        contentScale = ContentScale.Fit,
+        filterQuality = FilterQuality.None,
+        modifier = modifier.size(QR_SIZE).background(Color.White),
+    )
 }

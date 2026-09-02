@@ -9,7 +9,11 @@ package one.rarebit.heyarr.mobile.login
  */
 internal object MiniJson {
 
-    /** Extract a top-level string field's value, or null if absent/null. Handles `\"` escapes. */
+    /**
+     * Extract a top-level string field's value, or null if absent/null. Handles `\"`,
+     * `\n`/`\t`/`\r` and `\uXXXX` escapes — Go's `encoding/json` (heyarr-core) emits
+     * `&` in the `qr` tuple as `\u0026`, so the login tuple only parses if we decode it.
+     */
     fun stringField(json: String, key: String): String? {
         val needle = "\"$key\""
         var i = json.indexOf(needle)
@@ -27,6 +31,14 @@ internal object MiniJson {
             when {
                 c == '\\' && i + 1 < json.length -> {
                     val n = json[i + 1]
+                    if (n == 'u' && i + 5 < json.length) {
+                        val hex = json.substring(i + 2, i + 6).toIntOrNull(16)
+                        if (hex != null) {
+                            sb.append(hex.toChar())
+                            i += 6
+                            continue
+                        }
+                    }
                     sb.append(
                         when (n) {
                             'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'

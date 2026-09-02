@@ -41,8 +41,10 @@ This is a **scaffold**: a buildable, tested foundation. Feature work lands as PR
 
 Per the plan's DECISIONS LOG: **heyarr login channel = QR**. The app is the RP/initiator
 (`POST /login` → render the `voidbind:login?rp=&id=` tuple as a QR → poll `GET /login/{id}` →
-Bearer token). QR *bitmap* rendering and the device-side scan+approve are follow-ups; the
-initiator create+poll is real. (Contrast the sibling `allthing-android`, whose channel is
+Bearer token). The QR bitmap is rendered with ZXing core (`login/QrCode.kt`, JVM-tested by
+round-trip decode); the device-side scan+approve belongs to the authenticator. The initiator
+create+poll is real and proven against the live node — note heyarr-core's Go encoder emits
+`&` as `\u0026` in the `qr` field, which `login/MiniJson` decodes. (Contrast the sibling `allthing-android`, whose channel is
 push-approve — do **not** copy FCM/ntfy wiring here; heyarr is QR.)
 
 ## voidbind-kmp seam (do not silently fork the wire contract)
@@ -67,7 +69,8 @@ unwrap + a local **Personal MCP** (#372/#387) are device-gated follow-ups.
 
 ```
 app/src/main/java/one/rarebit/heyarr/mobile/
-  MainActivity.kt · AppViewModel.kt · HeyarrConfig.kt
+  MainActivity.kt · AppViewModel.kt · HeyarrConfig.kt (BuildConfig default → Settings override)
+  settings/     SettingsStore (SharedPreferences; in-memory for tests) + SettingsScreen
   auth/         Credential (Device/Session) + DeviceCredential (~-join header, Prover seam)
   login/        Voidbind QR-login seam (tuple, mini-json, VoidbindLogin, QrLoginClient, screen)
   library/      LibraryClient (native /api/v1/works) + WorksJson + SubsonicClient stub + screen
