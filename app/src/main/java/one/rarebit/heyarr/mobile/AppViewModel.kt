@@ -34,7 +34,9 @@ import one.rarebit.heyarr.mobile.net.DeviceAuthTransport
 import one.rarebit.heyarr.mobile.net.HttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpVoidbindTransport
+import one.rarebit.heyarr.mobile.playback.ClientCapabilities
 import one.rarebit.heyarr.mobile.playback.PlaybackClient
+import one.rarebit.heyarr.mobile.playback.PlaybackDiagnostics
 import one.rarebit.heyarr.mobile.playback.PlaybackTarget
 import one.rarebit.heyarr.mobile.search.SessionAuthority
 import one.rarebit.heyarr.mobile.search.SessionClient
@@ -47,8 +49,19 @@ import one.rarebit.voidbind.auth.PossessionProof
 import one.rarebit.voidbind.flow.PairingFailureKind
 import one.rarebit.voidbind.flow.PairingOutcome
 
-/** A resolved item the player is showing: its stream target and a display title. */
-data class NowPlaying(val target: PlaybackTarget, val title: String)
+/**
+ * A resolved item the player is showing: its stream target, a display title, the asset
+ * it came from (so a decoder the phone lacks can be re-planned into a stream, once),
+ * and a banner the app decided on after that re-plan.
+ */
+data class NowPlaying(
+    val target: PlaybackTarget,
+    val title: String,
+    val assetId: String? = null,
+    val blobHash: String? = null,
+    val banner: String? = null,
+    val replanned: Boolean = false,
+)
 
 /** The steps of a ViewModel built without the app's holder (tests): every pairing fails honestly. */
 private object UnavailablePairingSteps : PairingSteps {
@@ -111,6 +124,13 @@ class AppViewModel(
 
     /** Shared OkHttp client for the Media3 blob-stream data source. */
     val httpClient: OkHttpClient = OkHttpClient()
+
+    /**
+     * What this phone can decode, for `POST /playback/plan` (heyarr-core #432). Set by
+     * the Activity from `MediaCodecList`; null (tests, or before attach) means "don't
+     * plan — stream the blob directly, exactly as before the contract".
+     */
+    var capabilities: ClientCapabilities? = null
 
     private val _config = MutableStateFlow(resolveConfig())
     val configState: StateFlow<HeyarrConfig> = _config.asStateFlow()
@@ -621,8 +641,51 @@ class AppViewModel(
         }
         val mime = asset.mime ?: work.mime
         val isVideo = PlaybackTarget.looksLikeVideo(mime, work.kind)
-        val target = PlaybackClient(transport, config.baseUrl, cred).blobTarget(hash, isVideo, mime)
-        _nowPlaying.value = NowPlaying(target = target, title = asset.filename?.let { "${work.title} — $it" } ?: work.title)
+        val title = asset.filename?.let { "${work.title} — $it" } ?: work.title
+        val client = PlaybackClient(transport, config.baseUrl, cred)
+        val caps = capabilities
+        if (caps == null) {
+            _nowPlaying.value = NowPlaying(target = client.blobTarget(hash, isVideo, mime), title = title, assetId = asset.id, blobHash = hash)
+            return
+        }
+        // Plan first (heyarr-core #432): the node may repackage for this phone. A node
+        // that predates the contract answers 400 and `resolve` falls back to the blob.
+        viewModelScope.launch {
+            val target = withContext(Dispatchers.IO) {
+                runCatching { client.resolve(asset.id, hash, isVideo, mime, caps) }
+                    .getOrElse { client.blobTarget(hash, isVideo, mime).copy(reason = it.message) }
+            }
+            _nowPlaying.value = NowPlaying(target = target, title = title, assetId = asset.id, blobHash = hash)
+        }
+    }
+
+    /**
+     * The player found a renderer type Media3 can't decode (e.g. AC-3 5.1). If the node
+     * spoke the plan contract and judged the blob direct, ask ONCE more with that codec
+     * struck off — a `stream` answer swaps the target; anything else leaves an honest
+     * banner. A node that never spoke the contract has nothing to offer: the player's
+     * own "not available yet" banner already says so.
+     */
+    fun onPlaybackIssue(issue: PlaybackDiagnostics.Issue) {
+        val playing = _nowPlaying.value ?: return
+        val cred = credential ?: return
+        val caps = capabilities ?: return
+        if (playing.target.origin != PlaybackTarget.Origin.DIRECT_PLANNED || playing.replanned) return
+        val assetId = playing.assetId ?: return
+        val hash = playing.blobHash ?: return
+        val codec = issue.codec ?: return
+        val client = PlaybackClient(transport, config.baseUrl, cred)
+        viewModelScope.launch {
+            val replanned = withContext(Dispatchers.IO) {
+                runCatching { client.resolve(assetId, hash, playing.target.isVideo, playing.target.mimeType, caps.without(codec)) }.getOrNull()
+            }
+            if (_nowPlaying.value !== playing) return@launch // the user moved on
+            if (replanned != null && replanned.origin == PlaybackTarget.Origin.STREAM) {
+                _nowPlaying.value = playing.copy(target = replanned, replanned = true)
+            } else {
+                _nowPlaying.value = playing.copy(banner = PlaybackDiagnostics.afterReplanFailed(issue), replanned = true)
+            }
+        }
     }
 
     /** Close the player and release its target. */

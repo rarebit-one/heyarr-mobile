@@ -1,68 +1,72 @@
 package one.rarebit.heyarr.mobile.playback
 
-import one.rarebit.heyarr.mobile.net.JsonEscapes
+import one.rarebit.heyarr.mobile.net.JsonScan
 
 /**
- * A minimal, dependency-free reader for heyarr's playback-negotiation responses —
- * `POST /api/v1/playback/plan` (read-scoped) and `POST /api/v1/playback` (write) —
- * kept JVM-testable (no `org.json`, stubbed in unit tests) for the same reason as
- * [one.rarebit.heyarr.mobile.library.WorksJson] and the login `MiniJson`.
+ * A minimal, dependency-free reader for `POST /api/v1/playback/plan` (heyarr-core
+ * #432) — kept JVM-testable (no `org.json`, stubbed in unit tests) for the same
+ * reason as [one.rarebit.heyarr.mobile.library.WorksJson].
  *
- * The fields it lifts are the ones a client needs to start playing: the `content_url`
- * (present on a DIRECT plan), a short-lived `token` (minted by `POST /playback`), and
- * the plan `decision` so a non-DIRECT verdict (REMUX / TRANSCODE / a refusal) is a
- * value the UI can surface rather than a null URL it trips over. Everything richer
- * (routing, reasons, session id) is intentionally dropped here.
+ * The contract: `{ "mode": "direct" | "stream", "url", "mime", "reason",
+ * "source": { container, video, audio, width, height } }`. `direct` means play the
+ * blob as-is; `stream` means play [Plan.url] as a fragmented-MP4 progressive stream
+ * the node repackages for this phone (no seeking in v1). The pre-#432 shape
+ * (`decision: "DIRECT"` + `content_url`) is still read as a direct plan so a node
+ * mid-rollout cannot make a playable asset look unplayable.
  *
  * When a generated client lands (kotlinx.serialization against the published
  * OpenAPI), swap this for it.
  */
 object PlaybackJson {
 
-    /** The parsed shape of a playback plan/start response. */
+    /** What the node knows about the bytes it planned for — shown, never computed on. */
+    data class Source(
+        val container: String?,
+        val video: String?,
+        val audio: String?,
+        val width: Int?,
+        val height: Int?,
+    )
+
+    /** The parsed shape of a playback plan response. */
     data class Plan(
-        val contentUrl: String?,
-        val token: String?,
-        val decision: String?,
+        val mode: String?,
+        val url: String?,
+        val mime: String?,
+        val reason: String?,
+        val source: Source?,
+        /** Pre-#432 fields, read for the transition only. */
+        val decision: String? = null,
+        val token: String? = null,
     ) {
-        /** A DIRECT plan with a URL is immediately streamable; anything else is not (yet). */
-        val isDirect: Boolean get() = decision?.equals("DIRECT", ignoreCase = true) == true
-        val isPlayable: Boolean get() = !contentUrl.isNullOrBlank()
+        /** Play the blob (or [url] when the node names one) as it is. */
+        val isDirect: Boolean
+            get() = mode?.equals("direct", ignoreCase = true) == true ||
+                (mode == null && decision?.equals("DIRECT", ignoreCase = true) == true)
+
+        /** Play [url] as a node-repackaged progressive stream. */
+        val isStream: Boolean get() = mode?.equals("stream", ignoreCase = true) == true && !url.isNullOrBlank()
     }
 
-    fun parse(body: String): Plan =
-        Plan(
-            contentUrl = stringField(body, "content_url"),
-            token = stringField(body, "token"),
-            decision = stringField(body, "decision"),
-        )
-
-    /**
-     * Top-level string field reader (same escape handling as login/MiniJson). Reads
-     * only the first occurrence of the key at any depth, which is enough for these
-     * flat response bodies (`content_url`, `token` and `decision` are top-level).
-     */
-    private fun stringField(json: String, key: String): String? {
-        val needle = "\"$key\""
-        var i = json.indexOf(needle)
-        if (i < 0) return null
-        i += needle.length
-        while (i < json.length && (json[i] == ' ' || json[i] == '\t' || json[i] == ':')) i++
-        if (i >= json.length) return null
-        if (json.startsWith("null", i)) return null
-        if (json[i] != '"') return null
-        i++
-        val sb = StringBuilder()
-        while (i < json.length) {
-            val c = json[i]
-            when {
-                c == '\\' && i + 1 < json.length -> {
-                    i = JsonEscapes.append(sb, json, i)
-                }
-                c == '"' -> return sb.toString()
-                else -> { sb.append(c); i++ }
-            }
+    fun parse(body: String): Plan {
+        val root = JsonScan.rootObject(body) ?: body
+        val source = JsonScan.objectAt(root, "source")?.let { s ->
+            Source(
+                container = JsonScan.stringField(s, "container"),
+                video = JsonScan.stringField(s, "video"),
+                audio = JsonScan.stringField(s, "audio"),
+                width = JsonScan.intField(s, "width"),
+                height = JsonScan.intField(s, "height"),
+            )
         }
-        return null
+        return Plan(
+            mode = JsonScan.stringField(root, "mode"),
+            url = JsonScan.firstString(root, listOf("url", "content_url")),
+            mime = JsonScan.stringField(root, "mime"),
+            reason = JsonScan.stringField(root, "reason"),
+            source = source,
+            decision = JsonScan.stringField(root, "decision"),
+            token = JsonScan.stringField(root, "token"),
+        )
     }
 }

@@ -5,35 +5,42 @@ import one.rarebit.heyarr.mobile.net.HttpTransport
 
 /**
  * The playback / blob-stream seam. heyarr serves content two ways (mobile-client
- * contract):
+ * contract + heyarr-core #432):
  *
  *  - **Direct blob stream** — `GET /api/v1/blobs/{hash}/content`, a range-capable
- *    byte hop the player pulls from. This is the primitive a native media player
- *    (ExoPlayer/Media3) points at once it has a work's content hash, authenticated
- *    with the caller's [Credential]. This is the path the M10 player uses: the
- *    read-scoped bootstrap session can stream a blob it knows the hash of directly,
- *    and ExoPlayer's HTTP data source handles the `Range`/`206` seek itself.
- *  - **Negotiated playback** — `POST /api/v1/playback/plan` (read) / `POST
- *    /api/v1/playback` (write), which plan a session (transcode/remux/direct) and
- *    answer *how* to play a given **asset** (a `content_url`, and for the write path
- *    a short-lived `token`). Negotiation is keyed on an `asset_id` + a `device_id`,
- *    so it is fully exercised once the client is an **enrolled device** (device auth
- *    is phone-gated / billing-gated). [plan] lands the wire-correct create+parse now.
+ *    byte hop the player pulls from, authenticated with the caller's [Credential].
+ *    ExoPlayer's HTTP data source handles the `Range`/`206` seek itself.
+ *  - **Planned playback** — `POST /api/v1/playback/plan {asset_id, client}` with this
+ *    phone's REAL capabilities ([ClientCapabilities]); the node answers `direct`
+ *    (play the blob) or `stream` (play a phone-friendly fMP4 it repackages, same
+ *    origin, same credential, no seeking in v1). [resolve] is the one entry point:
+ *    it plans, and **falls back to the direct blob exactly as before** when the node
+ *    predates the contract (a 400 on the new fields) — or cannot be asked at all.
  *
- * What is proven in CI here (pure, unit-tested): the range-capable content URL, the
- * auth header, the range probe, the [PlaybackTarget] builder, and the plan
- * create+parse. What is phone-gated: feeding [PlaybackTarget.contentUrl] into a real
- * ExoPlayer/Media3 pipeline and seeking on a real codec — see the README.
+ * What is proven in CI here (pure, unit-tested): the content URL, the auth header,
+ * the plan request body, the plan reader, and the fallback. What is phone-gated:
+ * a real codec decoding the bytes.
  */
 class PlaybackClient(
     private val http: HttpTransport,
     private val baseUrl: String,
     private val credential: Credential,
 ) {
+    /** The planner's answer, reduced to what the player needs to know. */
+    sealed interface PlanResult {
+        /** Play the blob as it is (the node may name the URL; else the blob route). */
+        data class Direct(val url: String?, val reason: String?) : PlanResult
+
+        /** Play [url] as a node-repackaged progressive fMP4 stream. */
+        data class Stream(val url: String, val mime: String?, val reason: String?, val source: PlaybackJson.Source?) : PlanResult
+
+        /** The node doesn't speak the contract (400 on `client`), or could not be asked. */
+        data class Unavailable(val why: String) : PlanResult
+    }
+
     /**
      * Build the direct-stream [PlaybackTarget] for a known blob hash: the range-capable
-     * content URL under this client's credential. This is the path the M10 player takes
-     * for an item whose content hash the browse layer already knows.
+     * content URL under this client's credential.
      */
     fun blobTarget(hash: String, isVideo: Boolean, mimeType: String? = null): PlaybackTarget =
         PlaybackTarget(
@@ -44,33 +51,57 @@ class PlaybackClient(
         )
 
     /**
-     * Negotiate a DIRECT play for an asset via `POST /api/v1/playback/plan` (read
-     * scope — usable by the bootstrap session). Returns a [PlaybackTarget] when the
-     * plan is DIRECT and carries a `content_url`; returns null when the plan cannot be
-     * played directly (REMUX/TRANSCODE/refusal), which the caller surfaces rather than
-     * feeding the player a null URL.
-     *
-     * Keyed on `asset_id` + `device_id`; a real `device_id` arrives with device
-     * enrolment (phone-gated), so today's live path is [blobTarget]. The create+parse
-     * is wire-correct and unit-tested so it drops in unchanged once enrolment lands.
+     * `POST /api/v1/playback/plan` with [caps]. A 400 is an older node that rejects the
+     * `client` field (or still demands `device_id`) — [PlanResult.Unavailable], never
+     * an exception, so the caller falls back to the blob. Any other non-200 is an
+     * error worth surfacing (the asset is gone, the session is refused).
      */
-    fun plan(assetId: String, deviceId: String, isVideo: Boolean, mimeType: String? = null): PlaybackTarget? {
-        val body = """{"asset_id":${quote(assetId)},"device_id":${quote(deviceId)}}"""
-        val resp = http.post(
-            planUrl(baseUrl),
-            body = body,
-            contentType = "application/json",
-            headers = credential.asHeader(),
-        )
+    fun plan(assetId: String, caps: ClientCapabilities): PlanResult {
+        val resp = try {
+            http.post(
+                planUrl(baseUrl),
+                body = caps.planRequestBody(assetId),
+                contentType = "application/json",
+                headers = credential.asHeader(),
+            )
+        } catch (e: Exception) {
+            return PlanResult.Unavailable("plan request failed: ${e.message ?: e.javaClass.simpleName}")
+        }
+        if (resp.status == 400) return PlanResult.Unavailable("node predates the plan contract (HTTP 400)")
         require(resp.status == 200) { "playback: POST /playback/plan failed: HTTP ${resp.status}" }
-        val plan = PlaybackJson.parse(resp.body)
-        val url = plan.contentUrl?.takeIf { plan.isPlayable && plan.isDirect } ?: return null
-        return PlaybackTarget(
-            contentUrl = absolute(url),
-            credential = credential,
-            isVideo = isVideo,
-            mimeType = mimeType,
-        )
+        val p = PlaybackJson.parse(resp.body)
+        return when {
+            p.isStream -> PlanResult.Stream(absolute(p.url!!), p.mime, p.reason, p.source)
+            p.isDirect -> PlanResult.Direct(p.url?.let { absolute(it) }, p.reason)
+            else -> PlanResult.Unavailable("plan answered mode=${p.mode ?: p.decision ?: "?"} with no stream url")
+        }
+    }
+
+    /**
+     * The one call the app makes to play an asset: plan with [caps], then build the
+     * target — a stream when the node offers one, else the direct blob (planned when
+     * the node judged it, unplanned when the node couldn't be asked). Never null:
+     * a hash always yields SOMETHING to play, exactly as before #432.
+     */
+    fun resolve(assetId: String, hash: String, isVideo: Boolean, mimeType: String?, caps: ClientCapabilities): PlaybackTarget {
+        val direct = blobTarget(hash, isVideo, mimeType)
+        return when (val r = plan(assetId, caps)) {
+            is PlanResult.Stream -> PlaybackTarget(
+                contentUrl = r.url,
+                credential = credential,
+                isVideo = isVideo,
+                mimeType = r.mime ?: "video/mp4",
+                seekable = false,
+                origin = PlaybackTarget.Origin.STREAM,
+                reason = r.reason,
+            )
+            is PlanResult.Direct -> direct.copy(
+                contentUrl = r.url ?: direct.contentUrl,
+                origin = PlaybackTarget.Origin.DIRECT_PLANNED,
+                reason = r.reason,
+            )
+            is PlanResult.Unavailable -> direct.copy(reason = r.why)
+        }
     }
 
     /** HEAD-style range probe: does the server honour ranges for this blob (seekable)? */
@@ -86,7 +117,7 @@ class PlaybackClient(
         val acceptsRanges: Boolean get() = status == 206
     }
 
-    /** Resolve a possibly-relative `content_url` from a plan against the base origin. */
+    /** Resolve a possibly-relative plan `url` against the base origin. */
     private fun absolute(url: String): String =
         if (url.startsWith("http://") || url.startsWith("https://")) url
         else baseUrl.trimEnd('/') + "/" + url.trimStart('/')
@@ -113,19 +144,5 @@ class PlaybackClient(
         /** Pure, tested: the playback-plan endpoint (read path). */
         fun planUrl(baseUrl: String): String =
             baseUrl.trimEnd('/') + "/api/v1/playback/plan"
-
-        /** Minimal JSON string quoting for the plan request body. */
-        private fun quote(s: String): String {
-            val sb = StringBuilder("\"")
-            for (c in s) when (c) {
-                '"' -> sb.append("\\\"")
-                '\\' -> sb.append("\\\\")
-                '\n' -> sb.append("\\n")
-                '\r' -> sb.append("\\r")
-                '\t' -> sb.append("\\t")
-                else -> sb.append(c)
-            }
-            return sb.append("\"").toString()
-        }
     }
 }
