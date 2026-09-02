@@ -57,7 +57,7 @@ so it can foreground us) — no second-phone QR dance; the RP is still polled. (
 
 ## voidbind-kmp is consumed as the published `voidbind-client` artifact
 
-`one.rarebit.voidbind:voidbind-client:0.1.0` from GitHub Packages (private; needs a
+`one.rarebit.voidbind:voidbind-client:0.2.0` from GitHub Packages (private; needs a
 `read:packages` token — `settings.gradle.kts` reads `gpr.user`/`gpr.token` gradle
 properties or `GITHUB_ACTOR`/`GITHUB_TOKEN`; CI passes its own token). The library's
 minSdk is 33, so ours is too. **Do not re-derive any Voidbind wire format here** —
@@ -74,8 +74,9 @@ composite build against an unpublished voidbind-kmp change, see the commented
 `FragmentActivity`), the X25519 enc key sealed at rest by `device/SealedSecretStore`, and
 the stored cert. `device/EnrolScreen` + `AppViewModel` run voidbind-client's
 `DevicePairing` (the **new** device / relay responder): this phone opens a relay session on
-`HeyarrConfig.effectiveRelayBase` (default `<baseUrl>/pair/v1` — the voidbind-go relay
-wire, `POST /v1/sessions`, `PUT|GET /v1/sessions/{id}/{role}/{type}`), shows the
+`HeyarrConfig.effectiveRelayBase` (default `<baseUrl>/pair` — voidbind-client's `RelayClient`
+appends the voidbind-go relay wire itself, `POST {base}/v1/sessions`, `PUT|GET
+{base}/v1/sessions/{id}/{role}/{type}`, landing on heyarr-core's `/pair/v1/...` mount, #421/ADR-0066), shows the
 `voidbind:pair?…` invite as a QR **and** an "Open in Voidbind" hand-off, waits for the
 authorising side (the Voidbind app on the same phone, or `voidbind pair-initiate` on a
 machine holding the user identity), shows the 7-digit SAS, and on "codes match" receives

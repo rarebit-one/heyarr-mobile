@@ -26,9 +26,19 @@ class VoidbindHandoffTest {
     }
 
     @Test fun pairUriIsVerbatimAndTyped() {
-        val invite = "voidbind:pair?relay=http%3A%2F%2Fh%2Fpair%2Fv1&salt=00&session=s&v=2"
+        val invite = "voidbind:pair?relay=http%3A%2F%2Fh%2Fpair&salt=00&session=s&v=2"
         assertEquals(invite, VoidbindHandoff.pairUri(invite))
         assertThrows(IllegalArgumentException::class.java) { VoidbindHandoff.pairUri(tuple) }
         assertThrows(IllegalArgumentException::class.java) { VoidbindHandoff.loginUri(invite) }
+    }
+
+    @Test fun loginUriIsVoidbindClientsDeepLinkShape() {
+        // voidbind-client 0.2.0 is the source of truth for the handoff URI (ADR-0003).
+        assertEquals(
+            one.rarebit.voidbind.VoidbindDeepLink.loginUriFromTuple(tuple, VoidbindHandoff.CALLBACK_URI),
+            VoidbindHandoff.loginUri(tuple),
+        )
+        val parsed = one.rarebit.voidbind.VoidbindDeepLink.parse(VoidbindHandoff.loginUri(tuple))
+        assertEquals(VoidbindHandoff.CALLBACK_URI, parsed.callback)
     }
 }

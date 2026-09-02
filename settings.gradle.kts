@@ -29,6 +29,7 @@ dependencyResolutionManagement {
                 username = providers.gradleProperty("gpr.user").orNull
                     ?: System.getenv("GITHUB_ACTOR")
                 password = providers.gradleProperty("gpr.token").orNull
+                    ?: providers.gradleProperty("gpr.key").orNull // allthing-android's spelling
                     ?: System.getenv("GITHUB_TOKEN")
             }
             // Only voidbind artifacts live here; don't probe it for everything else.

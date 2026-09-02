@@ -30,7 +30,7 @@ This is a **scaffold** — a buildable, tested foundation, not a finished app.
 ### voidbind-kmp consumption
 
 This app depends on the **published** shared client,
-`one.rarebit.voidbind:voidbind-client:0.1.0` (GitHub Packages, private — a token with
+`one.rarebit.voidbind:voidbind-client:0.2.0` (GitHub Packages, private — a token with
 `read:packages` is required even for a same-org read). `settings.gradle.kts` reads
 `gpr.user` / `gpr.token` from `~/.gradle/gradle.properties`, or `GITHUB_ACTOR` /
 `GITHUB_TOKEN` from the environment; CI passes its own workflow token. Locally:
@@ -65,7 +65,7 @@ These need real hardware / a live server and can't be proven in CI:
   (`PlaybackClient.plan`) but keyed on an enrolled `device_id`, so it goes live with device auth.
 - **Device-cert login** — now **ships**: the sealed-key possession proof, the pairing
   handshake (`device/`, this phone = relay responder) and re-mint-on-401. What is still
-  gated on the *server*: a voidbind-go relay mounted under the node (`<baseUrl>/pair/v1`),
+  gated on the *server*: a voidbind-go relay mounted under the node (`<baseUrl>/pair/v1/…`, heyarr-core #421 — the client's relay base is `<baseUrl>/pair`),
   a self-enrol route (`POST /enrol`) or an admin registering the cert
   (`POST /api/v1/identities/devices`), and write scope for a device (heyarr-core #417 +
   `POST /api/v1/session/management-grants`). Completing a pairing needs the owner's
