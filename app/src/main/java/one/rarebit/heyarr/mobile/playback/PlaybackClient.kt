@@ -94,6 +94,11 @@ class PlaybackClient(
                 seekable = false,
                 origin = PlaybackTarget.Origin.STREAM,
                 reason = r.reason,
+                // #433 (ADR-0069): the token URL can be re-requested with ?start=<s> to
+                // restart ffmpeg from a new instant — a seek the player drives itself.
+                restartSeekable = true,
+                streamBaseUrl = r.url,
+                streamStartSeconds = 0.0,
             )
             is PlanResult.Direct -> direct.copy(
                 contentUrl = r.url ?: direct.contentUrl,

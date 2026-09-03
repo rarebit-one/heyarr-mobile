@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -33,18 +36,25 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
+
+/** One selectable subtitle track: the Media3 group + index behind a human label. */
+@UnstableApi
+private data class UiTextTrack(val id: String, val label: String, val group: Tracks.Group, val trackIndex: Int)
 
 /**
  * The M10 player. Streams a [PlaybackTarget] over the authenticated, range-capable
@@ -52,20 +62,27 @@ import okhttp3.OkHttpClient
  * supplies the transport controls and handles **both** video (renders to the
  * surface) and audio (controller-only, with the item title shown) items.
  *
- * The screen draws edge-to-edge but keeps everything a finger needs — the Back
- * button, the title, the transport controls, the banner — inside
- * `WindowInsets.safeDrawing` (status bar, navigation bar, the camera cutout in
- * landscape), so the Back button is never under the status bar.
+ * **Subtitles (#432).** The player builds on a [DefaultTrackSelector] with the text
+ * renderer enabled, reads the item's TEXT tracks (heyarr's `mov_text` — MP4 tx3g /
+ * MKV timed text — surface here through Media3's extractors), and offers a **CC**
+ * menu to pick one or turn them off (a `TrackSelectionOverride`, `PlayerView` renders
+ * the chosen track). The menu appears only when the item actually carries text tracks.
  *
- * It is HONEST about what the phone can't do (heyarr-core #432): a track group Media3
- * has no decoder for (the AC-3 5.1 case) raises a banner via [PlaybackDiagnostics]
- * and [onIssue] (so the app can re-plan for a stream), a decoder/renderer failure
- * shows an error state instead of a black surface, and a video stream that reaches
- * READY without ever rendering a frame (AVI) says so after a short grace.
+ * **Seeking a transcoded stream (#433, ADR-0069).** A `mode: stream` repackage cannot
+ * be range-sought — but the token URL can be re-requested with `?start=<seconds>` to
+ * restart ffmpeg from a new instant. For such a target the player shows explicit skip
+ * controls; a skip recomputes the offset from the current position and swaps the media
+ * item to the `?start=` URL, resuming there. The token is sent verbatim (the #16 trap).
  *
- * The ExoPlayer is owned by the composition and **released** when the screen leaves it
- * (`DisposableEffect`), so a backgrounded or dismissed player does not leak a codec or
- * hold the audio focus.
+ * It is HONEST about what the phone can't do: a track group Media3 has no decoder for
+ * (the AC-3 5.1 case) raises a banner via [PlaybackDiagnostics] and [onIssue] (so the
+ * app can re-plan for a stream), a decoder/renderer failure shows an error state
+ * instead of a black surface, and a video stream that reaches READY without ever
+ * rendering a frame (AVI) says so after a short grace.
+ *
+ * The ExoPlayer is owned by the composition and **released** when the media changes or
+ * the screen leaves it (`DisposableEffect`), so a backgrounded, re-sought or dismissed
+ * player does not leak a codec or hold the audio focus.
  */
 @UnstableApi
 @Composable
@@ -82,23 +99,46 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
 
-    // Per-target verdicts: a new target (a re-planned stream) starts clean.
-    var localIssue by remember(target.contentUrl) { mutableStateOf<String?>(null) }
-    var errorText by remember(target.contentUrl) { mutableStateOf<String?>(null) }
-    var renderedFrame by remember(target.contentUrl) { mutableStateOf(false) }
-    var reachedReady by remember(target.contentUrl) { mutableStateOf(false) }
-    var noFrame by remember(target.contentUrl) { mutableStateOf(false) }
+    // A restart-seekable stream (#433) carries its own offset; a skip rebuilds the URL.
+    var streamStart by remember(target.streamBaseUrl) { mutableStateOf(target.streamStartSeconds) }
+    val effectiveTarget = if (target.restartSeekable && target.streamBaseUrl != null) target.atStreamStart(streamStart) else target
+    val mediaUrl = effectiveTarget.contentUrl
 
-    val player = remember(target.contentUrl) {
-        val dataSourceFactory: DataSource.Factory = HeyarrDataSource.factory(client, target)
+    // Per-media verdicts: a new URL (a re-planned stream, or a restart at a new offset)
+    // starts clean.
+    var localIssue by remember(mediaUrl) { mutableStateOf<String?>(null) }
+    var errorText by remember(mediaUrl) { mutableStateOf<String?>(null) }
+    var renderedFrame by remember(mediaUrl) { mutableStateOf(false) }
+    var reachedReady by remember(mediaUrl) { mutableStateOf(false) }
+    var noFrame by remember(mediaUrl) { mutableStateOf(false) }
+    var textTracks by remember(mediaUrl) { mutableStateOf<List<UiTextTrack>>(emptyList()) }
+    var selectedTrackId by remember(mediaUrl) { mutableStateOf<String?>(null) }
+
+    val trackSelector = remember(mediaUrl) { DefaultTrackSelector(context) }
+    val player = remember(mediaUrl) {
+        val dataSourceFactory: DataSource.Factory = HeyarrDataSource.factory(client, effectiveTarget)
         ExoPlayer.Builder(context)
+            .setTrackSelector(trackSelector)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .build()
             .apply {
-                setMediaItem(buildMediaItem(target, title))
+                setMediaItem(buildMediaItem(effectiveTarget, title))
                 prepare()
                 playWhenReady = true
             }
+    }
+
+    // Pick a text track (or turn subtitles off): an override + enabling the text renderer.
+    fun selectText(t: UiTextTrack?) {
+        val params = trackSelector.buildUponParameters()
+        if (t == null) {
+            params.clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+        } else {
+            params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                .setOverrideForType(TrackSelectionOverride(t.group.mediaTrackGroup, t.trackIndex))
+        }
+        trackSelector.setParameters(params.build())
+        selectedTrackId = t?.id
     }
 
     DisposableEffect(player) {
@@ -113,15 +153,28 @@ fun PlayerScreen(
                         channels = f?.channelCount ?: 0,
                     )
                 }
-                val issue = PlaybackDiagnostics.assess(groups, target)
+                val issue = PlaybackDiagnostics.assess(groups, effectiveTarget)
                 if (issue != null && localIssue == null) {
                     localIssue = issue.message
                     onIssue(issue)
                 }
+                // Collect the selectable TEXT tracks (heyarr's mov_text surfaces here).
+                val collected = ArrayList<UiTextTrack>()
+                var n = 0
+                tracks.groups.forEachIndexed { gi, g ->
+                    if (g.type != C.TRACK_TYPE_TEXT) return@forEachIndexed
+                    for (ti in 0 until g.length) {
+                        val f = g.getTrackFormat(ti)
+                        collected.add(UiTextTrack("g${gi}t$ti", Subtitles.label(f.language, f.label, n), g, ti))
+                        n++
+                    }
+                }
+                textTracks = collected
+                selectedTrackId = collected.firstOrNull { it.group.isTrackSelected(it.trackIndex) }?.id
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                errorText = PlaybackDiagnostics.describeError(error.errorCodeName, error.message, target)
+                errorText = PlaybackDiagnostics.describeError(error.errorCodeName, error.message, effectiveTarget)
             }
 
             override fun onRenderedFirstFrame() { renderedFrame = true }
@@ -138,39 +191,52 @@ fun PlayerScreen(
     }
 
     // AVI-with-no-video: READY, duration known, picture never comes.
-    LaunchedEffect(reachedReady, target.contentUrl) {
-        if (!reachedReady || !target.isVideo) return@LaunchedEffect
+    LaunchedEffect(reachedReady, mediaUrl) {
+        if (!reachedReady || !effectiveTarget.isVideo) return@LaunchedEffect
         delay(PlaybackDiagnostics.NO_FRAME_GRACE_MS)
         if (!renderedFrame) noFrame = true
     }
 
-    val bannerText = banner ?: localIssue ?: noFrame.takeIf { it }?.let { PlaybackDiagnostics.noFrameMessage(target) }
-        ?: target.takeIf { it.origin == PlaybackTarget.Origin.STREAM }?.let { streamNote(it) }
+    // Skip the transcoded stream by restarting it at a new source offset (#433).
+    fun skipStream(deltaSeconds: Double) {
+        val posSeconds = player.currentPosition.coerceAtLeast(0L).toDouble() / 1000.0
+        streamStart = (streamStart + posSeconds + deltaSeconds).coerceAtLeast(0.0)
+    }
+
+    val bannerText = banner ?: localIssue ?: noFrame.takeIf { it }?.let { PlaybackDiagnostics.noFrameMessage(effectiveTarget) }
+        ?: effectiveTarget.takeIf { it.origin == PlaybackTarget.Origin.STREAM }?.let { streamNote(it) }
 
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val showSeek = effectiveTarget.restartSeekable && effectiveTarget.isVideo
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         if (errorText != null) {
             ErrorState(title = title, message = errorText!!, onBack = onBack)
             return@Box
         }
-        if (landscape && target.isVideo) {
+        if (landscape && effectiveTarget.isVideo) {
             // Landscape video: the surface fills the screen; the controls (a PlayerView
             // draws its own) and our overlays stay out of the cutout and the nav bar.
-            PlayerSurface(player, target, Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing))
+            PlayerSurface(player, effectiveTarget, Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing))
             Row(
-                modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.safeDrawing)
+                modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 BackButton(onBack)
                 Text(
                     title, color = Color.White, style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
                 )
+                if (textTracks.isNotEmpty()) SubtitleMenu(textTracks, selectedTrackId) { selectText(it) }
             }
-            bannerText?.let {
-                Banner(it, Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp))
+            Column(
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.safeDrawing).padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (showSeek) StreamSeekControls(streamStart) { skipStream(it) }
+                bannerText?.let { Banner(it, Modifier.padding(top = 8.dp)) }
             }
         } else {
             Column(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -183,18 +249,19 @@ fun PlayerScreen(
                     Text(
                         title, color = Color.White, style = MaterialTheme.typography.titleMedium,
                         maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(start = 4.dp),
+                        modifier = Modifier.padding(start = 4.dp).weight(1f),
                     )
+                    if (textTracks.isNotEmpty()) SubtitleMenu(textTracks, selectedTrackId) { selectText(it) }
                 }
                 Box(
                     modifier = Modifier.fillMaxWidth().let {
                         // Give video a 16:9 stage; an audio item just needs the transport bar.
-                        if (target.isVideo) it.aspectRatio(16f / 9f) else it
+                        if (effectiveTarget.isVideo) it.aspectRatio(16f / 9f) else it
                     },
                     contentAlignment = Alignment.Center,
                 ) {
-                    PlayerSurface(player, target, Modifier.fillMaxWidth())
-                    if (!target.isVideo) {
+                    PlayerSurface(player, effectiveTarget, Modifier.fillMaxWidth())
+                    if (!effectiveTarget.isVideo) {
                         Text(
                             "♪  $title", color = Color.White,
                             style = MaterialTheme.typography.bodyLarge,
@@ -202,6 +269,7 @@ fun PlayerScreen(
                         )
                     }
                 }
+                if (showSeek) StreamSeekControls(streamStart, Modifier.padding(12.dp)) { skipStream(it) }
                 bannerText?.let { Banner(it, Modifier.padding(12.dp)) }
             }
         }
@@ -219,8 +287,9 @@ private fun PlayerSurface(player: ExoPlayer, target: PlaybackTarget, modifier: M
                 // Audio-only items have no video track — keep the controls up.
                 controllerShowTimeoutMs = if (target.isVideo) 3_000 else 0
                 if (!target.seekable) {
-                    // A node-repackaged stream can't seek in v1: no ±10 s, a scrubber
-                    // that shows position but refuses a drag.
+                    // A node-repackaged stream can't be range-sought: no ±10 s, a scrubber
+                    // that shows position but refuses a drag. A restart-seekable stream gets
+                    // our own skip controls instead (StreamSeekControls).
                     setShowFastForwardButton(false)
                     setShowRewindButton(false)
                     findViewById<View>(androidx.media3.ui.R.id.exo_progress)?.isEnabled = false
@@ -229,6 +298,55 @@ private fun PlayerSurface(player: ExoPlayer, target: PlaybackTarget, modifier: M
         },
         modifier = modifier,
     )
+}
+
+/** The CC menu: turn subtitles off or pick one of the item's text tracks. */
+@UnstableApi
+@Composable
+private fun SubtitleMenu(tracks: List<UiTextTrack>, selectedId: String?, onSelect: (UiTextTrack?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }) {
+            Text(if (selectedId == null) "CC" else "CC ●", color = Color.White)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(if (selectedId == null) "Subtitles off ✓" else "Subtitles off") },
+                onClick = { onSelect(null); open = false },
+            )
+            tracks.forEach { t ->
+                DropdownMenuItem(
+                    text = { Text(if (t.id == selectedId) "${t.label} ✓" else t.label) },
+                    onClick = { onSelect(t); open = false },
+                )
+            }
+        }
+    }
+}
+
+/** Explicit skip controls for a restart-seekable stream (#433): each restarts ffmpeg at a new offset. */
+@Composable
+private fun StreamSeekControls(startSeconds: Double, modifier: Modifier = Modifier, onSkip: (Double) -> Unit) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = { onSkip(-30.0) }) { Text("⏪ 30s", color = Color.White) }
+        Text("from ${clock(startSeconds)}", color = Color.White, style = MaterialTheme.typography.labelMedium)
+        Spacer(Modifier.weight(1f, fill = false))
+        TextButton(onClick = { onSkip(30.0) }) { Text("30s ⏩", color = Color.White) }
+    }
+}
+
+/** Seconds → `m:ss` / `h:mm:ss` for the restart-seek label. */
+private fun clock(seconds: Double): String {
+    val total = seconds.toLong().coerceAtLeast(0)
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val s = total % 60
+    return if (h > 0) String.format(java.util.Locale.ROOT, "%d:%02d:%02d", h, m, s)
+    else String.format(java.util.Locale.ROOT, "%d:%02d", m, s)
 }
 
 @Composable
@@ -273,7 +391,8 @@ private fun ErrorState(title: String, message: String, onBack: () -> Unit) {
 
 private fun streamNote(target: PlaybackTarget): String {
     val why = target.reason?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
-    return "Playing a phone-friendly stream from the server$why — no seeking yet."
+    val seek = if (target.restartSeekable) " Skip restarts it from the new point." else " No seeking yet."
+    return "Playing a phone-friendly stream from the server$why.$seek"
 }
 
 /** Build the [MediaItem], hinting the container MIME when the target carries one. */

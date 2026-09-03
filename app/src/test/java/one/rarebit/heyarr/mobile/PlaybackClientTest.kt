@@ -147,6 +147,11 @@ class PlaybackClientTest {
         assertFalse(target.seekable)
         assertEquals(PlaybackTarget.Origin.STREAM, target.origin)
         assertEquals("remux", target.reason)
+        // #433: the stream target is restart-seekable off the (start-less) token URL.
+        assertTrue(target.restartSeekable)
+        assertEquals("https://h.example/api/v1/playback/stream/abc", target.streamBaseUrl)
+        assertEquals(0.0, target.streamStartSeconds, 0.0)
+        assertEquals("https://h.example/api/v1/playback/stream/abc?start=45", target.atStreamStart(45.0).contentUrl)
     }
 
     @Test fun resolveTreatsAnUnknownModeAsDirect() {
