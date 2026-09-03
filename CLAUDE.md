@@ -80,6 +80,22 @@ and joins it automatically after "Create device key" — a link never triggers t
 fingerprint prompt by itself; a still-loading keyring continues when the read lands. The
 SAS is shown large with "switch back to Cruciform" copy; the confirm happens on Cruciform.
 
+**Same-phone pairing is ONE TAP (voidbind-kmp ADR-0008).** When the invite arrived by that
+deep link — and only then — this app, the moment its relay commit is posted and the SAS is
+derived, fires **`cruciform://pair-joined?session=&dev=<our ed25519 device key>&sas=<our
+SAS>`** (`device/CruciformPairCallback` + the `CruciformAnnouncer` seam on
+`PairingCoordinator`). That is a LOCAL intent the relay cannot touch, so Cruciform can
+compare our key + SAS against what the relay revealed and settle the man-in-the-middle
+check **between the apps** — it then asks one question behind its biometric and there is no
+code for the human to read. This side goes straight to awaiting the admission
+(`CompareSas.handedOff`), keeps the SAS in state, and the Enrol screen **reveals it as a
+fallback after ~20 s** if Cruciform never comes back (an older build, a refused launch) —
+a report nothing takes leaves the flow exactly as it was. Cruciform then opens
+**`heyarr-mobile://pair-done?session=…`** to land the user back on the Device tab, enrolled;
+that link carries the session id only and is a navigation hint, never evidence. **A scanned
+or pasted invite keeps the human SAS comparison** — there is no local channel to another
+device.
+
 **The pipeline runs in an app-scoped holder, not the ViewModel.** `device/PairingCoordinator`
 (pure Kotlin, unit-tested state machine, keyed by the invite's relay **session id**) lives in
 `HeyarrApp.pairing` on an app-wide scope and drives join → SAS → human gate → admission →

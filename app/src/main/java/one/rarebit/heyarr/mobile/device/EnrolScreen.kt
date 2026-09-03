@@ -74,6 +74,14 @@ sealed interface EnrolUiState {
         val sameDevice: Boolean = false,
         val deadlineMillis: Long = 0L,
         val awaitingAdmission: Boolean = false,
+        /**
+         * Cruciform is on this phone and took our `cruciform://pair-joined` report
+         * (voidbind-kmp ADR-0008): the two apps compared the device key and the SAS over
+         * the local intent channel, so there is nothing here for the human to compare —
+         * they approve once, in Cruciform. The SAS is still held, and the screen reveals
+         * it as a fallback if Cruciform has not come back after a while.
+         */
+        val handedOff: Boolean = false,
     ) : EnrolUiState
 
     /** The admission is stored; `POST /enrol` is in flight. */
@@ -133,6 +141,14 @@ private fun CountdownLine(prefix: String, deadlineMillis: Long, now: Long, suffi
     )
 }
 
+/**
+ * How long the one-tap hand-off gets before this screen shows the SAS anyway (ADR-0008).
+ * Long enough that the ordinary path — Cruciform foregrounding and putting its "Allow"
+ * question up — never trips it, short enough that a phone left staring at a spinner
+ * because Cruciform is an older build gets its human path back quickly.
+ */
+private const val SAS_FALLBACK_MILLIS = 20_000L
+
 /** Ticks once a second while composed, for the countdowns. */
 @Composable
 private fun rememberNowMillis(): Long {
@@ -180,6 +196,10 @@ fun EnrolScreen(
     onRegister: () -> Unit = {},
 ) {
     val now = rememberNowMillis()
+    // When the one-tap hand-off to Cruciform started, so the SAS fallback can appear if
+    // it never comes back (ADR-0008). Reset per session, not per recomposition.
+    val handedOffSession = (state as? EnrolUiState.CompareSas)?.takeIf { it.handedOff }?.sas
+    val handedOffSince = remember(handedOffSession) { System.currentTimeMillis() }
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -262,7 +282,33 @@ fun EnrolScreen(
                 }
                 OutlinedButton(onClick = onCancelPairing) { Text("Cancel pairing") }
             }
-            is EnrolUiState.CompareSas -> {
+            is EnrolUiState.CompareSas -> if (state.handedOff) {
+                // ADR-0008: the apps compared. One question, in Cruciform, behind its
+                // fingerprint — no code on this screen unless it goes quiet.
+                Text("Approve in Cruciform", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Cruciform is on this phone, so the two apps checked each other's keys directly — " +
+                        "there is no code for you to compare. It is asking you to allow this app; confirm " +
+                        "there with your fingerprint and you'll land back here, enrolled.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                if (state.deadlineMillis > 0) {
+                    CountdownLine("", state.deadlineMillis, now, " left before the relay session expires.")
+                }
+                // The fallback: if Cruciform never puts the question up (an old build, a
+                // refused launch), the human path is still there — show the code and say
+                // what to do with it, rather than spinning forever with nothing to act on.
+                if (now - handedOffSince >= SAS_FALLBACK_MILLIS) {
+                    Text(
+                        "Cruciform hasn't come back yet. If it is showing a security code instead of " +
+                            "an \"Allow\" question, compare it with this one and confirm there:",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    SasCard(state.sas)
+                }
+                OutlinedButton(onClick = onCancelPairing) { Text("Cancel pairing") }
+            } else {
                 Text("Compare the security code", style = MaterialTheme.typography.titleMedium)
                 Text(
                     if (state.sameDevice) {

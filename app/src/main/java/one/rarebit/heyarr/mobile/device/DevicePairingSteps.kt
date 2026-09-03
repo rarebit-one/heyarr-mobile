@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import one.rarebit.heyarr.mobile.auth.Credential
 import one.rarebit.heyarr.mobile.net.HttpTransport
+import one.rarebit.voidbind.KeyRef
 import one.rarebit.voidbind.auth.PossessionProof
 import one.rarebit.voidbind.flow.DevicePairing
 import one.rarebit.voidbind.flow.PairingFailureKind
@@ -38,12 +39,13 @@ class DevicePairingSteps(
     private fun noKeys(): PairingOutcome.Failed =
         PairingOutcome.Failed(PairingFailureKind.PROTOCOL, "This phone's device keys are not available. Open the Device screen and try again.", "")
 
-    override suspend fun handshake(inviteQr: String, deadlineMillis: Long): PairingOutcome<String> =
+    override suspend fun handshake(inviteQr: String, deadlineMillis: Long): PairingOutcome<PairingSteps.Handshaked> =
         runInterruptible(Dispatchers.IO) {
             val ring = keyring() ?: return@runInterruptible noKeys()
+            val identity = ring.identity()
             val p = DevicePairing(
                 PatientRelayTransport(relayTransport, deadlineMillis, clock),
-                ring.identity(),
+                identity,
                 clock = { clock() / 1000 },
             )
             pairing = p
@@ -51,7 +53,15 @@ class DevicePairingSteps(
                 is PairingOutcome.Failed -> o
                 is PairingOutcome.Ready -> {
                     handshake = o.value
-                    PairingOutcome.Ready(o.value.sas)
+                    // This phone's device signing key, rendered the way the wire renders
+                    // it — the same string the initiator sees in the relay reveal, so its
+                    // one-tap comparison (voidbind-kmp ADR-0008) is on identical bytes.
+                    PairingOutcome.Ready(
+                        PairingSteps.Handshaked(
+                            sas = o.value.sas,
+                            deviceId = KeyRef.ed25519(identity.signPublicKey).render(),
+                        ),
+                    )
                 }
             }
         }

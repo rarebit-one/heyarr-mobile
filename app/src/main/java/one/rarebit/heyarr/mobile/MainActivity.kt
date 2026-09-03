@@ -70,7 +70,7 @@ private enum class Tab(val label: String, val glyph: String) {
  * identical links distinct so the second re-fires. Either a usable [inviteQr] or a
  * [problem] to show.
  */
-private data class LinkedInvite(val inviteQr: String?, val problem: String?, val seq: Int)
+private data class LinkedInvite(val inviteQr: String?, val problem: String?, val seq: Int, val done: Boolean = false)
 
 /**
  * A [FragmentActivity] because `BiometricPrompt` — which gates every use of the
@@ -104,6 +104,10 @@ class MainActivity : FragmentActivity() {
     private fun routeLink(intent: Intent?): LinkedInvite? = when (val r = PairDeepLink.route(intent?.action, intent?.dataString)) {
         is PairDeepLink.Invite -> LinkedInvite(r.inviteQr, null, ++linkSeq)
         is PairDeepLink.Invalid -> LinkedInvite(null, r.message, ++linkSeq)
+        // The one-tap return leg (voidbind-kmp ADR-0008): nothing to join, nothing to
+        // trust — just bring the human back to the Device screen, where the app-scoped
+        // pairing has (or is about to have) reached Enrolled on its own.
+        is PairDeepLink.Done -> LinkedInvite(null, null, ++linkSeq, done = true)
         null -> null
     }
 
@@ -161,7 +165,14 @@ class MainActivity : FragmentActivity() {
                 val link = linkedInvite
                 LaunchedEffect(link) {
                     link ?: return@LaunchedEffect
-                    if (link.inviteQr != null) vm.receiveInviteLink(link.inviteQr) else vm.rejectInviteLink(link.problem ?: "bad invite link")
+                    when {
+                        // `pair-done`: Cruciform sent us back after authorising. The
+                        // enrolment came through our own relay pipeline; this only puts
+                        // the Device screen in front so the user sees the result.
+                        link.done -> Unit
+                        link.inviteQr != null -> vm.receiveInviteLink(link.inviteQr)
+                        else -> vm.rejectInviteLink(link.problem ?: "bad invite link")
+                    }
                     showSettings = false
                     showEnrol = true
                     focusDevice = link.seq

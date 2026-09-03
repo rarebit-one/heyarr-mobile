@@ -66,7 +66,7 @@ data class NowPlaying(
 /** The steps of a ViewModel built without the app's holder (tests): every pairing fails honestly. */
 private object UnavailablePairingSteps : PairingSteps {
     private val failed = PairingOutcome.Failed(PairingFailureKind.PROTOCOL, "pairing is not available in this build", "")
-    override suspend fun handshake(inviteQr: String, deadlineMillis: Long): PairingOutcome<String> = failed
+    override suspend fun handshake(inviteQr: String, deadlineMillis: Long): PairingOutcome<PairingSteps.Handshaked> = failed
     override suspend fun receive(deadlineMillis: Long): PairingOutcome<String> = failed
     override suspend fun register(op: String): EnrolClient.Outcome = EnrolClient.Outcome.Failed("pairing is not available in this build")
 }
@@ -289,7 +289,7 @@ class AppViewModel(
             is PairingState.CompareSas -> {
                 info ?: return
                 showingPairing = true
-                _enrolState.value = EnrolUiState.CompareSas(info, ps.sas, ps.sameDevice, ps.deadlineMillis, ps.awaitingAdmission)
+                _enrolState.value = EnrolUiState.CompareSas(info, ps.sas, ps.sameDevice, ps.deadlineMillis, ps.awaitingAdmission, ps.handedOff)
             }
             is PairingState.Registering -> {
                 info ?: return

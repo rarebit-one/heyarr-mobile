@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import one.rarebit.heyarr.mobile.device.CruciformAnnouncer
 import one.rarebit.heyarr.mobile.device.EnrolClient
 import one.rarebit.heyarr.mobile.device.InMemoryPendingPairingStore
 import one.rarebit.heyarr.mobile.device.PairingCoordinator
@@ -35,6 +36,9 @@ import org.junit.Test
 class PairingCoordinatorTest {
 
     private val usr = "ed25519:" + "ab".repeat(32)
+
+    /** This phone's device key as the handshake renders it — what the one-tap report carries. */
+    private val DEVICE_ID = "ed25519:" + "cd".repeat(32)
     private fun invite(session: String) =
         Invite.encode("http://192.168.16.5:8788", session, ByteArray(32) { it.toByte() }, usr)
 
@@ -46,7 +50,7 @@ class PairingCoordinatorTest {
 
     /** Scripted steps: each step waits on its gate so a test can interleave the human. */
     private class Fake : PairingSteps {
-        val handshakeGate = CompletableDeferred<PairingOutcome<String>>()
+        val handshakeGate = CompletableDeferred<PairingOutcome<PairingSteps.Handshaked>>()
         val receiveGate = CompletableDeferred<PairingOutcome<String>>()
         var registerOutcome: EnrolClient.Outcome = EnrolClient.Outcome.Registered("POST /enrol")
         var registerCalls = 0
@@ -54,7 +58,7 @@ class PairingCoordinatorTest {
         var receiveDeadline = 0L
         var handshakeInvite: String? = null
 
-        override suspend fun handshake(inviteQr: String, deadlineMillis: Long): PairingOutcome<String> {
+        override suspend fun handshake(inviteQr: String, deadlineMillis: Long): PairingOutcome<PairingSteps.Handshaked> {
             handshakeInvite = inviteQr
             handshakeDeadline = deadlineMillis
             return handshakeGate.await()
@@ -76,13 +80,28 @@ class PairingCoordinatorTest {
      * like `HeyarrApp.appScope`), so `advanceUntilIdle` runs its pipeline and a gate
      * left open at the end of a test does not hang `runTest`.
      */
-    private class Harness(scope: TestScope, now: () -> Long, val store: InMemoryPendingPairingStore = InMemoryPendingPairingStore()) {
+    /** Records what was reported to Cruciform, and whether an activity "took" it. */
+    private class RecordingAnnouncer(val taken: Boolean) : CruciformAnnouncer {
+        val reports = ArrayList<Triple<String, String, String>>()
+        override fun announceJoined(session: String, deviceId: String, sas: String): Boolean {
+            reports += Triple(session, deviceId, sas)
+            return taken
+        }
+    }
+
+    private class Harness(
+        scope: TestScope,
+        now: () -> Long,
+        val store: InMemoryPendingPairingStore = InMemoryPendingPairingStore(),
+        val announcer: CruciformAnnouncer = CruciformAnnouncer.None,
+    ) {
         val created = ArrayList<Pair<PendingPairing, Fake>>()
         val coordinator = PairingCoordinator(
             scope = CoroutineScope(StandardTestDispatcher(scope.testScheduler) + SupervisorJob()),
             store = store,
             steps = { p -> Fake().also { created += p to it } },
             clock = now,
+            announcer = announcer,
         )
         val state get() = coordinator.state.value
         val last get() = created.last().second
@@ -104,7 +123,7 @@ class PairingCoordinatorTest {
         assertEquals(inviteA, h.last.handshakeInvite)
         assertEquals(PendingPairing("sessA", inviteA, true, now), h.store.pending)
 
-        h.last.handshakeGate.complete(PairingOutcome.Ready("1234567"))
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("1234567", DEVICE_ID)))
         advanceUntilIdle()
         val compare = h.state as PairingState.CompareSas
         assertEquals("1234567", compare.sas)
@@ -145,7 +164,7 @@ class PairingCoordinatorTest {
         assertEquals("sessB", (h.state as PairingState.Joining).session)
         assertEquals("sessB", h.store.pending?.session)
         // The old session's late result must not resurface.
-        first.handshakeGate.complete(PairingOutcome.Ready("0000000"))
+        first.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("0000000", DEVICE_ID)))
         advanceUntilIdle()
         assertTrue(h.state is PairingState.Joining)
     }
@@ -174,7 +193,7 @@ class PairingCoordinatorTest {
         val h = Harness(this, { now })
         h.coordinator.start(inviteA, true)
         advanceUntilIdle()
-        h.last.handshakeGate.complete(PairingOutcome.Ready("7654321"))
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("7654321", DEVICE_ID)))
         advanceUntilIdle()
         h.coordinator.rejectMatch()
         advanceUntilIdle()
@@ -193,7 +212,7 @@ class PairingCoordinatorTest {
         advanceUntilIdle()
         assertEquals(PairingState.Idle, h.state)
         assertNull(h.store.pending)
-        h.last.handshakeGate.complete(PairingOutcome.Ready("1111111"))
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("1111111", DEVICE_ID)))
         advanceUntilIdle()
         assertEquals("a cancelled session's late result is dropped", PairingState.Idle, h.state)
     }
@@ -202,7 +221,7 @@ class PairingCoordinatorTest {
         val h = Harness(this, { now })
         h.coordinator.start(inviteA, true)
         advanceUntilIdle()
-        h.last.handshakeGate.complete(PairingOutcome.Ready("1234567"))
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("1234567", DEVICE_ID)))
         advanceUntilIdle()
         h.coordinator.confirmMatch()
         advanceUntilIdle()
@@ -258,5 +277,102 @@ class PairingCoordinatorTest {
         assertNull(f.session)
         assertEquals(0, h.created.size)
         assertNull(h.store.pending)
+    }
+
+
+    // ── the same-phone one-tap channel (voidbind-kmp ADR-0008) ──────────────────
+
+    @Test fun `a deep-linked invite reports its key and SAS to Cruciform and skips the human comparison`() = runTest(StandardTestDispatcher()) {
+        val announcer = RecordingAnnouncer(taken = true)
+        val h = Harness(this, { now }, announcer = announcer)
+        val c = h.coordinator
+
+        c.start(inviteA, sameDevice = true)
+        advanceUntilIdle()
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("1234567", DEVICE_ID)))
+        advanceUntilIdle()
+
+        // Exactly what Cruciform compares against the relay: our session, our key, our SAS.
+        assertEquals(listOf(Triple("sessA", DEVICE_ID, "1234567")), announcer.reports)
+        val compare = h.state as PairingState.CompareSas
+        assertTrue("the apps compared — no human gate on this side", compare.handedOff)
+        assertTrue("straight to awaiting Cruciform's admission", compare.awaitingAdmission)
+        // The SAS is still carried: the screen reveals it if Cruciform never comes back.
+        assertEquals("1234567", compare.sas)
+        // And the pipeline really did advance — receive() is running against the deadline.
+        assertEquals(now + ttl, h.last.receiveDeadline)
+
+        h.last.receiveGate.complete(PairingOutcome.Ready("op-token"))
+        advanceUntilIdle()
+        assertTrue(h.state is PairingState.Enrolled)
+    }
+
+    @Test fun `a scanned invite never reports to Cruciform - the human comparison is the only channel there is`() = runTest(StandardTestDispatcher()) {
+        // sameDevice=false is a QR from another phone or the Mac: there IS no local
+        // channel, and firing one would be reporting to an app that is not the peer.
+        val announcer = RecordingAnnouncer(taken = true)
+        val h = Harness(this, { now }, announcer = announcer)
+        h.coordinator.start(inviteA, sameDevice = false)
+        advanceUntilIdle()
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("1234567", DEVICE_ID)))
+        advanceUntilIdle()
+
+        assertTrue(announcer.reports.isEmpty())
+        val compare = h.state as PairingState.CompareSas
+        assertFalse(compare.handedOff)
+        assertFalse("the human still has to compare", compare.awaitingAdmission)
+    }
+
+    @Test fun `a report nothing takes falls back to the human comparison`() = runTest(StandardTestDispatcher()) {
+        // Cruciform absent, or an older build with no `pair-joined` filter: the launch
+        // resolves to nothing and this phone behaves exactly as it did before ADR-0008.
+        val announcer = RecordingAnnouncer(taken = false)
+        val h = Harness(this, { now }, announcer = announcer)
+        val c = h.coordinator
+        c.start(inviteA, sameDevice = true)
+        advanceUntilIdle()
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("1234567", DEVICE_ID)))
+        advanceUntilIdle()
+
+        assertEquals(1, announcer.reports.size)
+        val compare = h.state as PairingState.CompareSas
+        assertFalse(compare.handedOff)
+        assertFalse(compare.awaitingAdmission)
+
+        // …and the ordinary human gate still drives it to the end.
+        c.confirmMatch()
+        advanceUntilIdle()
+        h.last.receiveGate.complete(PairingOutcome.Ready("op-token"))
+        advanceUntilIdle()
+        assertTrue(h.state is PairingState.Enrolled)
+    }
+
+    @Test fun `a handshake with no device key never reports`() = runTest(StandardTestDispatcher()) {
+        // Defensive: an empty key would have Cruciform compare against nothing.
+        val announcer = RecordingAnnouncer(taken = true)
+        val h = Harness(this, { now }, announcer = announcer)
+        h.coordinator.start(inviteA, sameDevice = true)
+        advanceUntilIdle()
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("1234567", "")))
+        advanceUntilIdle()
+
+        assertTrue(announcer.reports.isEmpty())
+        assertFalse((h.state as PairingState.CompareSas).handedOff)
+    }
+
+    @Test fun `a stray codes-match tap on the handed-off path changes nothing`() = runTest(StandardTestDispatcher()) {
+        val h = Harness(this, { now }, announcer = RecordingAnnouncer(taken = true))
+        val c = h.coordinator
+        c.start(inviteA, sameDevice = true)
+        advanceUntilIdle()
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("1234567", DEVICE_ID)))
+        advanceUntilIdle()
+
+        c.confirmMatch()
+        c.rejectMatch()
+        advanceUntilIdle()
+        val compare = h.state as PairingState.CompareSas
+        assertTrue("already awaiting Cruciform; the buttons are not even shown", compare.awaitingAdmission)
+        assertTrue(compare.handedOff)
     }
 }

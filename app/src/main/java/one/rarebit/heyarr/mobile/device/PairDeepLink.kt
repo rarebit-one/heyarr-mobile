@@ -23,13 +23,26 @@ sealed interface PairDeepLink {
     /** Ours (`heyarr-mobile://pair…`) but unusable; [message] says why, for the screen. */
     data class Invalid(val message: String) : PairDeepLink
 
+    /**
+     * `heyarr-mobile://pair-done?session=…` — the RETURN leg of the same-phone one-tap
+     * enrolment (voidbind-kmp ADR-0008). Cruciform opens it after it has signed and
+     * delivered the admission, purely to bring the human back here, on the Device tab,
+     * enrolled. It carries the session id only and grants nothing: the admission arrived
+     * sealed over the relay and this app's own pipeline is what verified and stored it,
+     * so the link is a navigation hint, never evidence that anything succeeded.
+     */
+    data class Done(val session: String?) : PairDeepLink
+
     companion object {
         const val ACTION_VIEW = "android.intent.action.VIEW"
         const val SCHEME = "heyarr-mobile"
         const val HOST = "pair"
+        const val DONE_HOST = "pair-done"
         const val PARAM = "invite"
+        const val PARAM_SESSION = "session"
 
         private const val PREFIX = "$SCHEME://$HOST"
+        private const val DONE_PREFIX = "$SCHEME://$DONE_HOST"
 
         /**
          * Route an incoming intent. Returns null when the intent is not a `heyarr-mobile://pair`
@@ -40,6 +53,16 @@ sealed interface PairDeepLink {
         fun route(action: String?, dataString: String?): PairDeepLink? {
             if (action != ACTION_VIEW) return null
             val uri = dataString?.trim() ?: return null
+            // `pair-done` first: it shares the `…//pair` prefix, and the invite route
+            // below deliberately refuses a trailing `-done`.
+            if (uri.startsWith(DONE_PREFIX)) {
+                val rest = uri.substring(DONE_PREFIX.length)
+                if (rest.isNotEmpty() && rest[0] != '?' && rest[0] != '/') return null
+                val q = rest.indexOf('?')
+                val session = if (q < 0) null else queryParam(rest.substring(q + 1), PARAM_SESSION)
+                    ?.let { runCatching { percentDecode(it) }.getOrNull() }
+                return Done(session?.takeIf { it.isNotEmpty() })
+            }
             if (!uri.startsWith(PREFIX)) return null
             val rest = uri.substring(PREFIX.length)
             // `heyarr-mobile://pair`, `…/pair/`, `…/pair?…` — nothing else (e.g. `pairing`) is ours.
