@@ -8,17 +8,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import one.rarebit.heyarr.mobile.net.Timestamps
 import one.rarebit.heyarr.mobile.search.FollowedSource
@@ -26,14 +36,17 @@ import one.rarebit.heyarr.mobile.search.ReadOnlyAuthorityBanner
 import one.rarebit.heyarr.mobile.search.SessionAuthority
 
 /**
- * One work: title / year / kind, its identity, its files (with quality + size and a
- * **Play** per streamable one), its wants (with the §64 status and the management
- * actions the server has — cancel, pause/resume, retry, search again), and the
- * followed source it came from (tap → its detail). Every write honours the
- * session's authority: read-only ⇒ the buttons are disabled under the same honest
- * banner the Following screen shows, and the row's notice says why if tapped anyway.
+ * One work: title / year / kind, its identity, its external ids (#431), its files with
+ * quality + size and a **Play** per streamable one (`GET /works/{id}/assets`, joined,
+ * #429), its wants (with the §64 status and the management actions the server has —
+ * cancel, pause/resume, retry, search again), and the followed source it came from
+ * (tap → its detail). The work itself can now be **corrected** (`PATCH /works/{id}`)
+ * and **removed** (`DELETE /works/{id}`, #428) from here.
  *
- * Things the server cannot do are said, not hidden: there is no delete-a-work route.
+ * Every write honours the session's authority: read-only ⇒ the buttons are disabled
+ * under the same honest banner the Following screen shows, and the row's notice says
+ * why if tapped anyway. A delete a followed source blocks answers 409; the message is
+ * surfaced verbatim, never hidden.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,11 +62,21 @@ fun WorkDetailScreen(
     onRetry: (Want) -> Unit,
     onSearchAgain: (Want) -> Unit,
     onRemoveAsset: (WorkAsset) -> Unit,
+    onEditWork: (WorkPatch) -> Unit,
+    onDeleteWork: () -> Unit,
+    onWorkDeleted: () -> Unit,
     onOpenSource: (FollowedSource) -> Unit,
     onAuthorityRecheck: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val canWrite = authority?.canWrite == true
+    var showEdit by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    val loaded = state as? WorkDetailUiState.Loaded
+    // Once the delete took, leave the screen — the work is gone from the library.
+    LaunchedEffect(loaded?.deleted) { if (loaded?.deleted == true) onWorkDeleted() }
+
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             item {
@@ -132,17 +155,46 @@ fun WorkDetailScreen(
                         }
                     }
 
+                    item { SectionTitle("Manage", null) }
                     item {
-                        Text(
-                            "heyarr has no route to delete a work itself — remove its files and cancel its wants instead " +
-                                "(a removed file's bytes are reclaimed later by garbage collection).",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(top = 16.dp, bottom = 24.dp),
-                        )
+                        val busy = WorkDetailUiState.NOTICE_WORK in state.busy
+                        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { showEdit = true }, enabled = canWrite && !busy) { Text("Edit metadata") }
+                                OutlinedButton(onClick = { showDeleteConfirm = true }, enabled = canWrite && !busy) { Text("Delete work") }
+                            }
+                            Text(
+                                "Deleting removes the work, its editions, files and wants from the catalog — the bytes " +
+                                    "stay until garbage collection (ADR-0018). A work you still follow can't be deleted " +
+                                    "until you unfollow it.",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                            state.notices[WorkDetailUiState.NOTICE_WORK]?.let {
+                                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    if (loaded != null && showEdit) {
+        EditWorkDialog(
+            work = loaded.work,
+            onDismiss = { showEdit = false },
+            onSave = { patch -> showEdit = false; onEditWork(patch) },
+        )
+    }
+    if (loaded != null && showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete this work?") },
+            text = { Text("“${loaded.work.title}” and its ${loaded.assets.size} file(s) leave the catalog. The bytes are reclaimed later by garbage collection.") },
+            confirmButton = { TextButton(onClick = { showDeleteConfirm = false; onDeleteWork() }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -157,12 +209,65 @@ private fun Header(work: Work) {
         Timestamps.short(work.updatedAt ?: work.createdAt)?.let {
             Text("updated $it", style = MaterialTheme.typography.labelSmall)
         }
-        Text(
-            "External ids (tmdb/imdb/tvdb) are not readable over REST yet (ADR-0050 is MCP-only).",
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(top = 4.dp),
+        // External ids (#431), read-only, keyed by source (tmdb/imdb/tvdb).
+        if (work.externalIds.isEmpty()) {
+            Text("No external ids reconciled yet.", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+        } else {
+            Text("External ids", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+            work.externalIds.entries.sortedBy { it.key }.forEach { (source, id) ->
+                Text("$source: $id", style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace)
+            }
+        }
+    }
+}
+
+/** Edit a work's title / year / content type — the fields `PATCH /works/{id}` accepts (#428). */
+@Composable
+private fun EditWorkDialog(work: Work, onDismiss: () -> Unit, onSave: (WorkPatch) -> Unit) {
+    var title by remember { mutableStateOf(work.title) }
+    var year by remember { mutableStateOf(work.year?.toString() ?: "") }
+    var contentType by remember { mutableStateOf(work.kind ?: "") }
+
+    // Only the fields that actually changed; a cleared year sends year:0 (distinct from omit).
+    fun patch(): WorkPatch {
+        val trimmedTitle = title.trim()
+        val yearInput = year.trim()
+        val parsedYear = yearInput.toIntOrNull()
+        return WorkPatch(
+            title = trimmedTitle.takeIf { it.isNotBlank() && it != work.title },
+            year = parsedYear?.takeIf { it != work.year },
+            clearYear = yearInput.isBlank() && work.year != null,
+            contentType = contentType.trim().takeIf { it.isNotBlank() && it != (work.kind ?: "") },
         )
     }
+
+    val p = patch()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit metadata") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, singleLine = true)
+                OutlinedTextField(
+                    value = year,
+                    onValueChange = { year = it.filter(Char::isDigit) },
+                    label = { Text("Year (blank clears it)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                OutlinedTextField(value = contentType, onValueChange = { contentType = it }, label = { Text("Content type") }, singleLine = true)
+                if (title.trim().isBlank()) {
+                    Text("A blank title is refused by the server.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                } else if (p.isEmpty) {
+                    Text("Nothing changed yet.", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(p) }, enabled = title.trim().isNotBlank() && !p.isEmpty) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable

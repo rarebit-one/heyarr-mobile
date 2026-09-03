@@ -65,4 +65,27 @@ class JsonScanTest {
         val ordered = Timestamps.recentFirst(items) { it.second }.map { it.first }
         assertEquals(listOf("c", "e", "a", "b", "d"), ordered)
     }
+
+    @Test fun stringMapReadsAFlatStringObjectInOrder() {
+        val obj = """{"id":"w1","external_ids":{"tmdb":"42","imdb":"tt7","tvdb":"424242"},"title":"x"}"""
+        val ids = JsonScan.stringMap(obj, "external_ids")
+        assertEquals(listOf("tmdb", "imdb", "tvdb"), ids.keys.toList())
+        assertEquals("42", ids["tmdb"])
+        assertEquals("424242", ids["tvdb"])
+    }
+
+    @Test fun stringMapIsEmptyWhenAbsentEmptyOrNull() {
+        assertTrue(JsonScan.stringMap("""{"id":"w1"}""", "external_ids").isEmpty())
+        assertTrue(JsonScan.stringMap("""{"external_ids":{}}""", "external_ids").isEmpty())
+        assertTrue(JsonScan.stringMap("""{"external_ids":null}""", "external_ids").isEmpty())
+    }
+
+    @Test fun stringMapSkipsNonStringValuesAndDecodesEscapes() {
+        // A non-string value for a key is skipped, not guessed at; escapes decode.
+        val obj = """{"external_ids":{"tmdb":42,"imdb":"tt7","note":"a/b"}}"""
+        val ids = JsonScan.stringMap(obj, "external_ids")
+        assertNull(ids["tmdb"])
+        assertEquals("tt7", ids["imdb"])
+        assertEquals("a/b", ids["note"])
+    }
 }

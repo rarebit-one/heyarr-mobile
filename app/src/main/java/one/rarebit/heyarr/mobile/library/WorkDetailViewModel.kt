@@ -89,6 +89,34 @@ class WorkDetailViewModel(
     }
 
     /**
+     * Correct the work's catalogue facts (`PATCH /works/{id}`, #428). On success the
+     * header is replaced in place with the returned `Work` — merging back the external
+     * ids and playback handles the PATCH response does not carry, so an edit does not
+     * blank them. A 400 (blank title / unknown type) lands as a work-level notice.
+     */
+    fun editWork(patch: WorkPatch) = act(WorkDetailUiState.NOTICE_WORK) {
+        val outcome = detail.editWork(work.id, patch)
+        outcome to { s: WorkDetailUiState.Loaded ->
+            val parsed = (outcome as? WorkDetailClient.Outcome.Done)?.let { WorksJson.parseOne(it.body) }
+            val merged = parsed?.copy(
+                externalIds = parsed.externalIds.ifEmpty { s.work.externalIds },
+                blobHash = parsed.blobHash ?: s.work.blobHash,
+                mime = parsed.mime ?: s.work.mime,
+            ) ?: s.work
+            s.workReplaced(merged)
+        }
+    }
+
+    /**
+     * Remove the work (`DELETE /works/{id}`, #428): on success mark it deleted so the
+     * host pops back to the library. A work a followed source still owns answers 409 —
+     * that lands as a work-level notice naming the fix, verbatim from the node.
+     */
+    fun deleteWork() = act(WorkDetailUiState.NOTICE_WORK) {
+        detail.deleteWork(work.id) to { s: WorkDetailUiState.Loaded -> s.workDeleted() }
+    }
+
+    /**
      * Run one management write for [target]: mark it busy, call, then either apply
      * [onDone] to the loaded state or surface the outcome's message as its notice.
      */

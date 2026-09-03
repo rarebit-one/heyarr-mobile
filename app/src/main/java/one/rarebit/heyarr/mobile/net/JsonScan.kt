@@ -83,6 +83,58 @@ object JsonScan {
         return null
     }
 
+    /**
+     * A top-level object of string→string entries under [key] (e.g. heyarr's
+     * `external_ids`: `{ "tmdb": "42", "imdb": "tt7" }`), in document order. Absent,
+     * `null` or a non-object value → an empty map; a non-string value is skipped
+     * rather than guessed at. Fed the object's own slice, so a nested `external_ids`
+     * is never picked up. JVM-tested with the other [JsonScan] primitives.
+     */
+    fun stringMap(json: String, key: String): Map<String, String> {
+        val obj = objectAt(json, key) ?: return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        var i = 1 // past the opening '{'
+        while (i < obj.length) {
+            val c = obj[i]
+            when {
+                c == '"' -> {
+                    val k = readStringAt(obj, i) ?: break
+                    var j = k.second
+                    while (j < obj.length && (obj[j] == ' ' || obj[j] == '\t' || obj[j] == '\n' || obj[j] == '\r' || obj[j] == ':')) j++
+                    if (j < obj.length && obj[j] == '"') {
+                        val v = readStringAt(obj, j) ?: break
+                        out[k.first] = v.first
+                        i = v.second
+                    } else {
+                        // A non-string value for this key: skip it, keep scanning for more entries.
+                        i = j + 1
+                    }
+                }
+                c == '}' -> return out
+                else -> i++
+            }
+        }
+        return out
+    }
+
+    /**
+     * Read the JSON string literal starting at [start] (which must be `"`), returning
+     * the decoded value and the index just past the closing quote, or null if unterminated.
+     */
+    private fun readStringAt(json: String, start: Int): Pair<String, Int>? {
+        var i = start + 1
+        val sb = StringBuilder()
+        while (i < json.length) {
+            val c = json[i]
+            when {
+                c == '\\' && i + 1 < json.length -> i = JsonEscapes.append(sb, json, i)
+                c == '"' -> return sb.toString() to (i + 1)
+                else -> { sb.append(c); i++ }
+            }
+        }
+        return null
+    }
+
     /** A top-level integer field (a JSON number; a quoted number is NOT accepted). */
     fun longField(json: String, key: String): Long? {
         var i = valueStart(json, key) ?: return null

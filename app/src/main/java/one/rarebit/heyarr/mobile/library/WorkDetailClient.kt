@@ -11,13 +11,10 @@ import java.net.URLEncoder
  * `desired.go`):
  *
  * Reads (the `read` floor — a QR session can do all of these):
- * - `GET /assets?limit=200[&cursor]` + `GET /editions/{id}` → the work's files.
- *   **There is no per-work asset route** (`/assets` filters by `library_id` /
- *   `content_type` / `state` only, and an asset names its *edition*, not its work),
- *   so the client pages the collection and joins each distinct edition to its work
- *   — O(assets) reads on a homelab-sized library, with the edition→work map cached
- *   per client. A server-side `work_id` filter is the fix (filed on heyarr-core).
- * - `GET /blobs/{hash}` → the asset's byte size.
+ * - `GET /works/{id}/assets?limit=200[&cursor]` → the work's files, **joined and
+ *   complete** (heyarr-core #429): each `WorkAsset` inlines its edition label/type and
+ *   its blob's size + media type, so there is no more `/editions/{id}` + `/blobs/{hash}`
+ *   fan-out per asset. An unknown work is a 404, not an empty page.
  * - `GET /desired?work_id=…` → the wants for this work, with §64 acquisition facts.
  *
  * Writes (`write` scope — a read-scoped session gets a `403`, surfaced honestly):
@@ -27,18 +24,17 @@ import java.net.URLEncoder
  * - `POST /desired/{id}/search` → `202` — "search again": queue a candidate search.
  * - `DELETE /assets/{id}` — remove a file from the catalog (logical, ADR-0018: the
  *   blob stays until GC).
- *
- * **Not on the server**: there is no `DELETE /works/{id}` (nor `/editions/{id}`),
- * no `PATCH /works`, so a work cannot be removed or edited from here — only its
- * wants cancelled and its assets removed. Filed on heyarr-core rather than invented.
+ * - `PATCH /works/{id}` — correct a work's title / year / content type (#428). `year:0`
+ *   clears the year; an omitted field is left alone (see [WorkPatch]).
+ * - `DELETE /works/{id}` — remove the work, its editions, assets and wants (logical,
+ *   ADR-0018: no byte is unlinked). A work a followed source still owns answers **409**
+ *   naming `DELETE /followed-sources/{id}` as the fix; the message is surfaced verbatim.
  */
 class WorkDetailClient(
     private val http: HttpTransport,
     private val baseUrl: String,
     private val credential: Credential,
 ) {
-    private val editions = HashMap<String, Edition?>()
-
     /** The outcome of a management write — a value the VM/tests read directly. */
     sealed interface Outcome {
         /** The write took (`2xx`); [body] is the response body for callers that re-parse. */
@@ -57,41 +53,23 @@ class WorkDetailClient(
     // ── Reads ────────────────────────────────────────────────────────────────────
 
     /**
-     * Every asset whose edition belongs to [workId], with edition labels and blob
-     * sizes filled in. Throws on a non-200 list read so the caller can surface it.
+     * The work's files (`GET /works/{id}/assets`, #429), joined and complete: each
+     * asset already carries its edition label and its blob's size + media type, so no
+     * per-asset `/editions` or `/blobs` reads are made. Pages `next_cursor` to the end.
+     * Throws on a non-200 (a 404 is "no such work") so the caller can surface it.
      */
     fun assetsForWork(workId: String): List<WorkAsset> {
         val all = ArrayList<WorkAsset>()
         var cursor: String? = null
         var pages = 0
         do {
-            val resp = http.get(assetsUrl(baseUrl, cursor), credential.asHeader())
-            require(resp.status == 200) { "assets: GET /assets failed: HTTP ${resp.status}" }
+            val resp = http.get(workAssetsUrl(baseUrl, workId, cursor), credential.asHeader())
+            require(resp.status == 200) { "assets: GET /works/$workId/assets failed: HTTP ${resp.status}" }
             all.addAll(WorkDetailJson.parseAssets(resp.body))
             cursor = WorkDetailJson.nextCursor(resp.body)
             pages++
         } while (cursor != null && pages < LibraryClient.MAX_PAGES)
-
-        return all.mapNotNull { asset ->
-            val edition = edition(asset.editionId) ?: return@mapNotNull null
-            if (edition.workId != workId) return@mapNotNull null
-            asset.copy(
-                editionLabel = edition.label,
-                sizeBytes = asset.blobHash?.let { blobSize(it) },
-            )
-        }
-    }
-
-    /** `GET /editions/{id}`, cached; null when the edition cannot be read. */
-    fun edition(id: String): Edition? = editions.getOrPut(id) {
-        val resp = http.get(editionUrl(baseUrl, id), credential.asHeader())
-        if (resp.status == 200) WorkDetailJson.parseEdition(resp.body) else null
-    }
-
-    /** `GET /blobs/{hash}` → `size`, or null when unreadable. */
-    fun blobSize(hash: String): Long? {
-        val resp = http.get(blobUrl(baseUrl, hash), credential.asHeader())
-        return if (resp.status == 200) WorkDetailJson.parseBlobSize(resp.body) else null
+        return all
     }
 
     /** The wants for [workId], recent first. Throws on a non-200. */
@@ -126,6 +104,25 @@ class WorkDetailClient(
     fun removeAsset(assetId: String): Outcome =
         classify(http.delete(assetUrl(baseUrl, assetId), credential.asHeader()), "remove")
 
+    /**
+     * `PATCH /works/{id}` — correct the work's title / year / content type (#428).
+     * On success [Outcome.Done.body] is the corrected `Work` (the caller re-parses via
+     * [WorksJson.parseOne]). A 400 (blank title, unknown content type) lands as
+     * [Outcome.Refused] with the node's `detail`.
+     */
+    fun editWork(workId: String, patch: WorkPatch): Outcome =
+        classify(http.patch(workUrl(baseUrl, workId), patch.body(), "application/json", jsonHeaders), "edit")
+
+    /**
+     * `DELETE /works/{id}` — remove the work, its editions, assets and wants (logical:
+     * bytes stay until GC, ADR-0018). A work a followed source still owns answers
+     * **409** ("stop following it first — `DELETE /followed-sources/{id}`"); that lands
+     * as [Outcome.Refused] with the node's `detail`, surfaced verbatim rather than
+     * silently dropping the subscription.
+     */
+    fun deleteWork(workId: String): Outcome =
+        classify(http.delete(workUrl(baseUrl, workId), credential.asHeader()), "delete")
+
     private val jsonHeaders: Map<String, String>
         get() = credential.asHeader() + ("Content-Type" to "application/json")
 
@@ -144,14 +141,16 @@ class WorkDetailClient(
         private fun api(baseUrl: String) = baseUrl.trimEnd('/') + "/api/v1"
         private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
-        fun assetsUrl(baseUrl: String, cursor: String? = null): String {
-            val base = api(baseUrl) + "/assets?limit=" + LibraryClient.PAGE_LIMIT
+        /** `GET /works/{id}/assets?limit=200[&cursor]` — the joined per-work file list (#429). */
+        fun workAssetsUrl(baseUrl: String, workId: String, cursor: String? = null): String {
+            val base = workUrl(baseUrl, workId) + "/assets?limit=" + LibraryClient.PAGE_LIMIT
             return if (cursor.isNullOrBlank()) base else base + "&cursor=" + enc(cursor)
         }
 
+        /** `/works/{id}` — the PATCH/DELETE target and the assets-route base (#428). */
+        fun workUrl(baseUrl: String, id: String): String = api(baseUrl) + "/works/" + enc(id)
+
         fun assetUrl(baseUrl: String, id: String): String = api(baseUrl) + "/assets/" + enc(id)
-        fun editionUrl(baseUrl: String, id: String): String = api(baseUrl) + "/editions/" + enc(id)
-        fun blobUrl(baseUrl: String, hash: String): String = api(baseUrl) + "/blobs/" + enc(hash)
         fun wantsUrl(baseUrl: String, workId: String): String =
             api(baseUrl) + "/desired?work_id=" + enc(workId) + "&limit=" + LibraryClient.PAGE_LIMIT
         fun wantUrl(baseUrl: String, id: String): String = api(baseUrl) + "/desired/" + enc(id)

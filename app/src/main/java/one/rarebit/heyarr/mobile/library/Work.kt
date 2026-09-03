@@ -26,6 +26,13 @@ data class Work(
     /** heyarr's normalised identity (`work_key`), so a rescan converges on the same work. */
     val workKey: String? = null,
     val sortTitle: String? = null,
+    /**
+     * The identifiers this work is known by outside heyarr, keyed by source
+     * (`tmdb` / `imdb` / `tvdb`), as `GET /works/{id}` inlines them (heyarr-core #431,
+     * ADR-0050's REST twin — read-only). Empty when nothing has been reconciled or on
+     * the list read, which does not carry them.
+     */
+    val externalIds: Map<String, String> = emptyMap(),
     /** RFC 3339 server timestamps, as sent; parsed only for ordering/display. */
     val createdAt: String? = null,
     val updatedAt: String? = null,

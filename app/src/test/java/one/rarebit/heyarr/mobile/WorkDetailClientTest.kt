@@ -3,6 +3,7 @@ package one.rarebit.heyarr.mobile
 import one.rarebit.heyarr.mobile.auth.Credential
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.WorkDetailClient
+import one.rarebit.heyarr.mobile.library.WorkPatch
 import one.rarebit.heyarr.mobile.net.HttpResponse
 import one.rarebit.heyarr.mobile.net.HttpTransport
 import org.junit.Assert.assertEquals
@@ -36,11 +37,10 @@ class WorkDetailClientTest {
     private val cred = Credential.Session("tok")
 
     @Test fun buildsTheLiveRoutes() {
-        assertEquals("$base/api/v1/assets?limit=200", WorkDetailClient.assetsUrl(base))
-        assertEquals("$base/api/v1/assets?limit=200&cursor=a%2Fb", WorkDetailClient.assetsUrl(base, "a/b"))
+        assertEquals("$base/api/v1/works/w1/assets?limit=200", WorkDetailClient.workAssetsUrl(base, "w1"))
+        assertEquals("$base/api/v1/works/w1/assets?limit=200&cursor=a%2Fb", WorkDetailClient.workAssetsUrl(base, "w1", "a/b"))
+        assertEquals("$base/api/v1/works/w1", WorkDetailClient.workUrl(base, "w1"))
         assertEquals("$base/api/v1/assets/a1", WorkDetailClient.assetUrl(base, "a1"))
-        assertEquals("$base/api/v1/editions/e1", WorkDetailClient.editionUrl(base, "e1"))
-        assertEquals("$base/api/v1/blobs/blake3%3Aab", WorkDetailClient.blobUrl(base, "blake3:ab"))
         assertEquals("$base/api/v1/desired?work_id=w1&limit=200", WorkDetailClient.wantsUrl(base, "w1"))
         assertEquals("$base/api/v1/desired/d1", WorkDetailClient.wantUrl(base, "d1"))
         assertEquals("""{"monitor":false}""", WorkDetailClient.monitorBody(false))
@@ -48,30 +48,29 @@ class WorkDetailClientTest {
         assertEquals("$base/api/v1/works?limit=200&cursor=c1", LibraryClient.worksUrl(base, "c1"))
     }
 
-    @Test fun assetsForWorkPagesTheCollectionAndJoinsThroughEditions() {
-        // No per-work asset route exists: the client walks /assets and resolves each
-        // distinct edition to its work, keeping only this work's, with label + size.
+    @Test fun assetsForWorkReadsTheJoinedPerWorkRoute() {
+        // #429: GET /works/{id}/assets returns joined WorkAssets — edition label + blob
+        // size + blob mime inline, no /editions or /blobs fan-out. Paged by next_cursor.
         val t = RoutedTransport(
             mapOf(
-                "GET /assets?limit=200" to HttpResponse(200, """{"items":[{"id":"a1","edition_id":"e1","source_class":"managed","blob_hash":"blake3:aa","role":"primary","filename":"one.mkv","mime":"video/x-matroska","identification_source":"scan","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}],"next_cursor":"p2"}"""),
-                "GET /assets?limit=200&cursor=p2" to HttpResponse(200, """{"items":[
-                    {"id":"a2","edition_id":"e2","source_class":"managed","blob_hash":"blake3:bb","role":"primary","filename":"other.mkv","identification_source":"scan","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"},
-                    {"id":"a3","edition_id":"e1","source_class":"linked","blob_hash":null,"role":"subtitle","filename":"one.srt","identification_source":"scan","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}
+                "GET /works/w1/assets?limit=200" to HttpResponse(200, """{"items":[
+                    {"id":"a1","edition_id":"e1","source_class":"managed","blob_hash":"blake3:aa","role":"primary","filename":"one.mkv","edition_label":"1080p","edition_type":"release","blob_size":2048,"blob_mime":"video/x-matroska","identification_source":"scan","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}
+                ],"next_cursor":"p2"}"""),
+                "GET /works/w1/assets?limit=200&cursor=p2" to HttpResponse(200, """{"items":[
+                    {"id":"a3","edition_id":"e1","source_class":"linked","blob_hash":null,"role":"subtitle","filename":"one.srt","edition_label":"1080p","edition_type":"release","blob_size":null,"blob_mime":null,"identification_source":"scan","created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T00:00:00Z"}
                 ]}"""),
-                "GET /editions/e1" to HttpResponse(200, """{"id":"e1","work_id":"w1","label":"1080p","edition_type":"release","attributes":{},"created_at":"2026-09-01T00:00:00Z"}"""),
-                "GET /editions/e2" to HttpResponse(200, """{"id":"e2","work_id":"w2","label":"x","edition_type":"release","attributes":{},"created_at":"2026-09-01T00:00:00Z"}"""),
-                "GET /blobs/blake3%3Aaa" to HttpResponse(200, """{"hash":"blake3:aa","size":2048,"mime":"video/x-matroska","chunked":false,"chunk_manifest":"not_required","first_seen_at":"2026-09-01T00:00:00Z"}"""),
             ),
         )
         val assets = WorkDetailClient(t, base, cred).assetsForWork("w1")
         assertEquals(listOf("a1", "a3"), assets.map { it.id })
         assertEquals("1080p", assets[0].editionLabel)
         assertEquals(2048L, assets[0].sizeBytes)
+        assertEquals("video/x-matroska", assets[0].mime)
         assertEquals(null, assets[1].sizeBytes)
-        // e1 resolved once (cached), e2 once, blob read once for the one hashed asset of ours.
-        assertEquals(1, t.calls.count { it.second.endsWith("/editions/e1") })
-        assertEquals(1, t.calls.count { it.second.endsWith("/editions/e2") })
-        assertEquals(1, t.calls.count { it.second.contains("/blobs/") })
+        // No edition/blob fan-out at all — only the two page reads.
+        assertEquals(2, t.calls.size)
+        assertEquals(0, t.calls.count { it.second.contains("/editions/") })
+        assertEquals(0, t.calls.count { it.second.contains("/blobs/") })
         assertEquals("Bearer tok", t.lastAuth)
     }
 
@@ -108,6 +107,35 @@ class WorkDetailClientTest {
             t.calls.map { it.first + " " + it.second.substringAfter("/api/v1") },
         )
         assertEquals("""{"monitor":false}""", t.calls[1].third)
+    }
+
+    @Test fun editWorkPatchesTheWorkAndCarriesTheBody() {
+        val t = RoutedTransport(
+            mapOf(
+                "PATCH /works/w1" to HttpResponse(200, """{"id":"w1","content_type":"movie","work_key":"k","title":"The Conversation","sort_title":"conversation, the","year":1974,"attributes":{},"created_at":"x","updated_at":"y"}"""),
+            ),
+        )
+        val out = WorkDetailClient(t, base, cred).editWork("w1", WorkPatch(title = "The Conversation", year = 1974))
+        assertTrue(out is WorkDetailClient.Outcome.Done)
+        assertEquals("PATCH", t.calls.single().first)
+        assertTrue(t.calls.single().second.endsWith("/works/w1"))
+        assertEquals("""{"title":"The Conversation","year":1974}""", t.calls.single().third)
+    }
+
+    @Test fun deleteWorkHitsTheRouteAndSurfacesTheFollowedSource409Verbatim() {
+        val detail = "this work is still followed — stop following it first (DELETE /followed-sources/s1)"
+        val t = RoutedTransport(
+            mapOf(
+                "DELETE /works/w1" to HttpResponse(204, ""),
+                "DELETE /works/w2" to HttpResponse(409, """{"status":409,"detail":"$detail"}"""),
+            ),
+        )
+        val c = WorkDetailClient(t, base, cred)
+        assertTrue(c.deleteWork("w1") is WorkDetailClient.Outcome.Done)
+        val refused = c.deleteWork("w2")
+        assertTrue(refused is WorkDetailClient.Outcome.Refused)
+        assertEquals(409, (refused as WorkDetailClient.Outcome.Refused).status)
+        assertEquals(detail, refused.message)
     }
 
     @Test fun a403IsTheHonestReadOnlyHintAndA400CarriesTheDetail() {

@@ -102,17 +102,22 @@ object WorkDetailJson {
         val obj = JsonScan.rootObject(body) ?: return null
         val id = JsonScan.stringField(obj, "id") ?: return null
         val editionId = JsonScan.stringField(obj, "edition_id") ?: return null
+        // `GET /works/{id}/assets` (#429) inlines the edition label/type and the blob's
+        // size + media type, so a WorkAsset off that route is complete with no edition
+        // or blob join; those fields are simply absent on the plain `/assets` shape.
         return WorkAsset(
             id = id,
             editionId = editionId,
             role = JsonScan.stringField(obj, "role"),
             filename = JsonScan.stringField(obj, "filename"),
-            mime = JsonScan.stringField(obj, "mime"),
+            mime = JsonScan.stringField(obj, "mime") ?: JsonScan.stringField(obj, "blob_mime"),
             blobHash = JsonScan.stringField(obj, "blob_hash"),
             sourceClass = JsonScan.stringField(obj, "source_class"),
             sourcePath = JsonScan.stringField(obj, "source_path"),
             missingSince = JsonScan.stringField(obj, "missing_since"),
+            sizeBytes = JsonScan.longField(obj, "blob_size"),
             createdAt = JsonScan.stringField(obj, "created_at"),
+            editionLabel = JsonScan.stringField(obj, "edition_label"),
         )
     }
 
@@ -165,3 +170,48 @@ object WorkDetailJson {
 
 /** heyarr-core `Edition`, reduced to what joins an asset to its work and labels it. */
 data class Edition(val id: String, val workId: String, val label: String? = null, val editionType: String? = null)
+
+/**
+ * A correction to a work's catalogue facts — the `PATCH /api/v1/works/{id}` body
+ * (heyarr-core #428, `WorkPatch`). Every field is optional and an omitted one is left
+ * alone; [year] is the one distinction the API draws twice — `null` here **omits** it
+ * (leave the year as it is) while [clearYear] sends `"year": 0`, which *clears* the
+ * year. [contentType] must be one the node knows or the PATCH answers 400.
+ *
+ * The wire body is built here (not the transport) so the "omit vs. clear" encoding is
+ * unit-tested on plain JVM, the same stance as [one.rarebit.heyarr.mobile.playback.ClientCapabilities].
+ */
+data class WorkPatch(
+    val title: String? = null,
+    val year: Int? = null,
+    val clearYear: Boolean = false,
+    val contentType: String? = null,
+) {
+    /** True when nothing would change — the screen refuses to send an empty PATCH. */
+    val isEmpty: Boolean get() = title == null && year == null && !clearYear && contentType == null
+
+    /** The JSON body: only the fields actually being changed; `year:0` when [clearYear]. */
+    fun body(): String {
+        val parts = ArrayList<String>(3)
+        title?.let { parts.add("\"title\":${quote(it)}") }
+        when {
+            clearYear -> parts.add("\"year\":0")
+            year != null -> parts.add("\"year\":$year")
+        }
+        contentType?.let { parts.add("\"content_type\":${quote(it)}") }
+        return parts.joinToString(",", "{", "}")
+    }
+
+    private fun quote(s: String): String {
+        val sb = StringBuilder("\"")
+        for (c in s) when (c) {
+            '"' -> sb.append("\\\"")
+            '\\' -> sb.append("\\\\")
+            '\n' -> sb.append("\\n")
+            '\r' -> sb.append("\\r")
+            '\t' -> sb.append("\\t")
+            else -> sb.append(c)
+        }
+        return sb.append("\"").toString()
+    }
+}

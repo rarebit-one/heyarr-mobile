@@ -50,6 +50,7 @@ object WorksJson {
             year = JsonScan.intField(obj, "year"),
             workKey = JsonScan.stringField(obj, "work_key"),
             sortTitle = JsonScan.stringField(obj, "sort_title"),
+            externalIds = JsonScan.stringMap(obj, "external_ids"),
             createdAt = JsonScan.stringField(obj, "created_at"),
             updatedAt = JsonScan.stringField(obj, "updated_at"),
         )
