@@ -49,8 +49,15 @@ class InMemoryPendingPairingStore : PendingPairingStore {
  * session's TTL — resolving to a `TIMEOUT` failure once it passes, never earlier.
  */
 interface PairingSteps {
+    /**
+     * What the handshake produced: the SAS to show, and THIS phone's device signing key
+     * as `ed25519:<hex>` — the key the initiator's add op will name, and the value the
+     * same-phone one-tap report carries back to Cruciform (voidbind-kmp ADR-0008).
+     */
+    data class Handshaked(val sas: String, val deviceId: String)
+
     /** Join the invite and run the commit-before-reveal handshake → the SAS to show. */
-    suspend fun handshake(inviteQr: String, deadlineMillis: Long): PairingOutcome<String>
+    suspend fun handshake(inviteQr: String, deadlineMillis: Long): PairingOutcome<Handshaked>
 
     /**
      * After the human matched the SAS: wait for the initiator's sealed admission,
@@ -128,6 +135,14 @@ sealed interface PairingState {
         override val deadlineMillis: Long,
         val sas: String,
         val awaitingAdmission: Boolean,
+        /**
+         * True when Cruciform is on this phone and TOOK our `cruciform://pair-joined`
+         * report (voidbind-kmp ADR-0008): the two apps compared the device key and SAS
+         * over the local intent channel, so there is nothing for the human to compare
+         * here and this side went straight to awaiting the admission. The SAS is still
+         * carried — the screen reveals it as a fallback if Cruciform never comes back.
+         */
+        val handedOff: Boolean = false,
     ) : Live
 
     /** The admission is persisted; `POST /enrol` is in flight. */
@@ -182,6 +197,13 @@ class PairingCoordinator(
     private val steps: (PendingPairing) -> PairingSteps,
     private val clock: () -> Long = System::currentTimeMillis,
     private val ttlMillis: Long = RELAY_SESSION_TTL_MILLIS,
+    /**
+     * The local channel back to Cruciform for a SAME-PHONE pairing (voidbind-kmp
+     * ADR-0008). Fired once, right after the handshake, and only for an invite that
+     * arrived by deep link — a scanned or pasted invite came from another device, where
+     * the human comparison is the only out-of-band channel there is.
+     */
+    private val announcer: CruciformAnnouncer = CruciformAnnouncer.None,
 ) {
     private val _state = MutableStateFlow<PairingState>(PairingState.Idle)
     val state: StateFlow<PairingState> = _state.asStateFlow()
@@ -252,12 +274,27 @@ class PairingCoordinator(
     }
 
     private suspend fun run(p: PendingPairing, s: PairingSteps, deadline: Long) {
-        val sas = when (val h = s.handshake(p.inviteQr, deadline)) {
+        val handshaked = when (val h = s.handshake(p.inviteQr, deadline)) {
             is PairingOutcome.Failed -> return fail(p, h)
             is PairingOutcome.Ready -> h.value
         }
-        _state.value = PairingState.CompareSas(p.session, p.inviteQr, p.sameDevice, deadline, sas, awaitingAdmission = false)
-        val matched = verdict.await()
+        val sas = handshaked.sas
+        // ADR-0008: on ONE phone the SAS comparison can be made by the two apps over the
+        // local intent channel instead of by the human across two screens. Report what we
+        // derived; Cruciform checks it against what the relay revealed and refuses on any
+        // disagreement. A report that nothing takes (no Cruciform, or an older build)
+        // leaves this exactly as it was — the human compares.
+        val handedOff = p.sameDevice &&
+            handshaked.deviceId.isNotBlank() &&
+            announcer.announceJoined(p.session, handshaked.deviceId, sas)
+        _state.value = PairingState.CompareSas(
+            p.session, p.inviteQr, p.sameDevice, deadline, sas,
+            awaitingAdmission = handedOff, handedOff = handedOff,
+        )
+        // When the apps compared, there is no human verdict to wait for on this side:
+        // the gate that matters is Cruciform's biometric, and nothing reaches this phone
+        // until it passes. The SAS stays in the state as the screen's fallback.
+        val matched = if (handedOff) true else verdict.await()
         if (!matched) {
             return finish(
                 PairingState.Failed(
@@ -266,7 +303,10 @@ class PairingCoordinator(
                 ),
             )
         }
-        _state.value = PairingState.CompareSas(p.session, p.inviteQr, p.sameDevice, deadline, sas, awaitingAdmission = true)
+        _state.value = PairingState.CompareSas(
+            p.session, p.inviteQr, p.sameDevice, deadline, sas,
+            awaitingAdmission = true, handedOff = handedOff,
+        )
         val op = when (val r = s.receive(deadline)) {
             is PairingOutcome.Failed -> return fail(p, r)
             is PairingOutcome.Ready -> r.value

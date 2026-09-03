@@ -9,7 +9,10 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import one.rarebit.heyarr.mobile.device.CruciformAnnouncer
+import one.rarebit.heyarr.mobile.device.CruciformPairCallback
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
+import one.rarebit.heyarr.mobile.device.HandoffLauncher
 import one.rarebit.heyarr.mobile.device.DevicePairingSteps
 import one.rarebit.heyarr.mobile.device.PairingCoordinator
 import one.rarebit.heyarr.mobile.device.PairingForegroundService
@@ -60,6 +63,13 @@ class HeyarrApp : Application() {
                     deviceName = { deviceName },
                     credential = { credentialProvider() },
                 )
+            },
+            // The same-phone one-tap channel (voidbind-kmp ADR-0008): tell Cruciform on
+            // THIS phone what we derived, so the two apps settle the SAS comparison the
+            // human was doing across two screens. Nothing takes it → false → this phone
+            // shows the SAS and the human compares, exactly as before.
+            announcer = CruciformAnnouncer { session, deviceId, sas ->
+                HandoffLauncher.open(this, CruciformPairCallback.joinedUri(session, deviceId, sas))
             },
         )
     }
