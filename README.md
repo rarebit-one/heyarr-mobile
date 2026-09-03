@@ -86,12 +86,12 @@ These need real hardware / a live server and can't be proven in CI:
 - **Subsonic/OPDS/DLNA reach** — deciding whether to ship the compat adapters at all vs. leaning
   on the native API; `library/SubsonicClient` marks the fork as a decision, not an omission.
 
-## Releases — signed APKs, installed and updated via Obtainium
+## Releases — signed APKs, published per tag
 
 Debug builds are a dead end: they are signed with the throwaway debug key, so they can
 never be updated in place by a real release. Every tagged version is therefore built as
-a **signed release APK** and attached to a GitHub Release, and the phone tracks that
-Release feed through [Obtainium](https://github.com/ImranR98/Obtainium).
+a **signed release APK** and attached to a GitHub Release, which is the artefact the
+phone installs.
 
 ### Cutting a release
 
@@ -133,18 +133,15 @@ export RELEASE_KEY_ALIAS=one.rarebit.heyarr.mobile
 ./gradlew :app:assembleRelease -PreleaseVersionName=v0.2.1
 ```
 
-### Obtainium
+### Getting it onto a phone
 
-`obtainium.json` is the source config, importable via Obtainium → **Import/Export →
-Import from a file** (or add it by hand: **Add App** → URL
-`https://github.com/rarebit-one/heyarr-mobile`, source GitHub):
+Download the APK from the Release and `adb install` it, or open the Release page on
+the phone. There is deliberately no third-party app-store client in the loop.
 
-- APK filter regex: `heyarr-mobile-.*\.apk`
-- Version extraction regex: `^v(.*)$`, match group `1`
-- Include pre-releases: off
-
-Obtainium needs a GitHub token for this **private** repo (Settings → Source-specific →
-GitHub → Personal Access Token).
+How this is *meant* to be distributed — a self-hosted install page plus an in-app
+updater that checks for and applies a new signed build — is being designed in
+[`rarebit-one/heyarr-core#441`](https://github.com/rarebit-one/heyarr-core/issues/441).
+Not built yet; this section is the pointer, not the plan.
 
 ## License
 
