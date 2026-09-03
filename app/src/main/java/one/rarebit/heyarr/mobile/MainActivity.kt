@@ -204,7 +204,13 @@ class MainActivity : FragmentActivity() {
                             onSasMismatch = vm::rejectSas,
                             onRetry = vm::retryEnrol,
                             onForget = vm::forgetDevice,
-                            onDone = { vm.useDeviceCredential(); showEnrol = false },
+                            // Finishing enrol here signs the phone in (adopts the Device
+                            // credential → Approved → SignedInScaffold). Clear focusDevice
+                            // so that scaffold's LaunchedEffect(focusDevice) doesn't see the
+                            // stale deep-link seq and yank the user straight back to the
+                            // Device tab — that bounce is what made the FIRST "Continue" look
+                            // like a no-op and demand a second tap (#24). Land on Library.
+                            onDone = { vm.useDeviceCredential(); showEnrol = false; focusDevice = 0 },
                             modifier = Modifier.padding(padding),
                             parkedInvite = parkedInvite,
                             onDiscardParked = vm::discardParkedInvite,
