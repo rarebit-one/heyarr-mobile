@@ -25,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import one.rarebit.heyarr.mobile.library.Want
 import one.rarebit.heyarr.mobile.net.Timestamps
 
 /** UI state for one followed source's detail. */
@@ -33,15 +32,15 @@ sealed interface SourceDetailUiState {
     data object Loading : SourceDetailUiState
 
     /**
-     * [source] is the row as the list reports it (there is no `GET /followed-sources/{id}`;
-     * the list is re-read and the id picked out). [items] are the wants the source
-     * projected onto its work (`GET /desired?work_id=`), recent first — the archive as
-     * heyarr tracks it. [error] is the last unfollow refusal/failure, [gone] true once
-     * the unfollow took.
+     * [source] is the subscription (`GET /followed-sources/{id}`, #430). [items] are
+     * what the source's feed has yielded and what heyarr did about it
+     * (`GET /followed-sources/{id}/items`) — the archive as heyarr tracks it, `item_key`
+     * order. [error] is the last unfollow refusal/failure, [gone] true once the unfollow
+     * took.
      */
     data class Loaded(
         val source: FollowedSource,
-        val items: List<Want> = emptyList(),
+        val items: List<FollowedItem> = emptyList(),
         val itemsError: String? = null,
         val error: String? = null,
         val busy: Boolean = false,
@@ -133,28 +132,33 @@ fun FollowedSourceDetailScreen(
                         }
                     }
                     item {
-                        Text("Archived items  ${state.items.size}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
+                        val archivedCount = state.items.count { it.archived }
+                        Text(
+                            "Archive  $archivedCount/${state.items.size}",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+                        )
                         state.itemsError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                         if (state.items.isEmpty() && state.itemsError == null) {
-                            Text("No items projected yet.", style = MaterialTheme.typography.bodySmall)
+                            Text("Nothing archived or known yet — the first poll may not have run.", style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    items(state.items, key = { it.id }) { want ->
+                    items(state.items, key = { it.id }) { item ->
                         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                            Text(want.editionId ?: want.id, style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                listOfNotNull(want.status, Timestamps.short(want.recency)).joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (item.archived) "✓ " else "· ", style = MaterialTheme.typography.bodyMedium)
+                                Text(item.title, style = MaterialTheme.typography.bodyMedium)
+                            }
+                            val sub = listOfNotNull(
+                                item.subtitle.takeIf { it.isNotBlank() },
+                                Timestamps.short(item.publishedAt),
+                            ).joinToString(" · ")
+                            if (sub.isNotBlank()) Text(sub, style = MaterialTheme.typography.bodySmall)
+                            item.want?.summary?.takeIf { it.isNotBlank() }?.let {
+                                Text("want: $it", style = MaterialTheme.typography.labelSmall)
+                            } ?: Text("not wanted (back-catalogue the source only knows about)", style = MaterialTheme.typography.labelSmall)
                         }
                         HorizontalDivider()
-                    }
-                    item {
-                        Text(
-                            "Items are the wants this source projected onto its work (there is no per-source items route yet).",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
-                        )
                     }
                 }
             }

@@ -47,11 +47,19 @@ class FollowedSourceDetailTest {
         assertEquals(listOf("s1", "s2"), FollowedSourcesJson.recentFirst(s.reversed()).map { it.id })
     }
 
+    // One archived episode with a projected want, and one back-catalogue item the source
+    // only knows about (want:null) — the #430 items shape.
+    private val items = """{"items":[
+        {"id":"i1","work_id":"w1","edition_id":"e1","item_key":"S01E01","title":"Pilot","published_at":"2026-08-20T00:00:00Z","archived":true,"want":{"desired_item_id":"d1","phase":"complete","content":"satisfied","placement":"satisfied"},"created_at":"x"},
+        {"id":"i2","work_id":"w1","item_key":"S00E00","title":"Old special","archived":false,"want":null,"created_at":"x"}
+    ]}"""
+
     private fun vm(vararg extra: Pair<String, HttpResponse>): Pair<SearchViewModel, RoutedTransport> {
         val t = RoutedTransport(
             mapOf(
                 "GET /followed-sources" to HttpResponse(200, list),
-                "GET /desired?work_id=w1&limit=200" to HttpResponse(200, """{"items":[{"id":"d1","scope":"edition","work_id":"w1","edition_id":"e1","quality_profile_id":"qp","monitor":true,"acquisition":{"state":"CONTENT_SATISFIED","phase":"complete","managed":true,"content":"satisfied","placement":"satisfied"},"created_at":"x","updated_at":"x"}]}"""),
+                "GET /followed-sources/s1" to HttpResponse(200, """{"id":"s1","work_id":"w1","title":"Some Show","type":"tv_series","feed_ref":"tvdb:424242","quality_profile_id":"qp","monitor":true,"backfill":"from_now","reason":"weekly","items_known":10,"items_archived":8,"health":"healthy","created_at":"2026-08-01T00:00:00Z","last_polled_at":"2026-09-01T00:00:00Z","next_poll_at":"2026-09-02T00:00:00Z"}"""),
+                "GET /followed-sources/s1/items?limit=200" to HttpResponse(200, items),
                 *extra,
             ),
         )
@@ -59,14 +67,17 @@ class FollowedSourceDetailTest {
         return vm to t
     }
 
-    @Test fun listIsRecentFirstAndOpenSourceLoadsItsItems() {
+    @Test fun listIsRecentFirstAndOpenSourceLoadsItsArchive() {
         val (vm, _) = vm()
         vm.loadFollowing()
         assertEquals(listOf("s1", "s2"), (vm.followingState.value as FollowingUiState.Loaded).sources.map { it.id })
         vm.openSource("s1")
         val d = vm.sourceDetail.value as SourceDetailUiState.Loaded
         assertEquals("tvdb:424242", d.source.feedRef)
-        assertEquals("e1", d.items.single().editionId)
+        assertEquals(listOf("i1", "i2"), d.items.map { it.id })
+        assertEquals(true, d.items[0].archived)
+        assertEquals("d1", d.items[0].want?.desiredItemId)
+        assertNull(d.items[1].want)
         assertNull(d.error)
         vm.closeSource()
         assertNull(vm.sourceDetail.value)

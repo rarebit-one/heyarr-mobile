@@ -18,6 +18,7 @@ import one.rarebit.heyarr.mobile.search.FollowedSource
 import one.rarebit.heyarr.mobile.search.FollowingClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -62,10 +63,8 @@ class WorkDetailViewModelTest {
 
     private fun node(vararg extra: Pair<String, HttpResponse>) = RoutedTransport(
         mapOf(
-            "GET /works/w1" to HttpResponse(200, """{"id":"w1","content_type":"movie","title":"Dune","year":2021,"work_key":"k","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}"""),
-            "GET /assets?limit=200" to HttpResponse(200, """{"items":[{"id":"a1","edition_id":"e1","source_class":"managed","blob_hash":"blake3:aa","role":"primary","filename":"Dune.mkv","mime":"video/mp4","identification_source":"scan","created_at":"x","updated_at":"x"}]}"""),
-            "GET /editions/e1" to HttpResponse(200, """{"id":"e1","work_id":"w1","label":"4K","edition_type":"release","attributes":{},"created_at":"x"}"""),
-            "GET /blobs/blake3%3Aaa" to HttpResponse(200, """{"hash":"blake3:aa","size":100,"chunked":false,"chunk_manifest":"not_required","first_seen_at":"x"}"""),
+            "GET /works/w1" to HttpResponse(200, """{"id":"w1","content_type":"movie","title":"Dune","year":2021,"work_key":"k","external_ids":{"tmdb":"438631"},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}"""),
+            "GET /works/w1/assets?limit=200" to HttpResponse(200, """{"items":[{"id":"a1","edition_id":"e1","source_class":"managed","blob_hash":"blake3:aa","role":"primary","filename":"Dune.mkv","edition_label":"4K","edition_type":"release","blob_size":100,"blob_mime":"video/mp4","identification_source":"scan","created_at":"x","updated_at":"x"}]}"""),
             "GET /desired?work_id=w1&limit=200" to HttpResponse(200, """{"items":[{"id":"d1","scope":"work","work_id":"w1","quality_profile_id":"q","monitor":true,"acquisition":{"state":"WANTED","phase":"searching","managed":false,"content":"missing","placement":"n/a"},"created_at":"x","updated_at":"x"}]}"""),
             "GET /followed-sources" to HttpResponse(200, """{"followed_sources":[{"id":"s1","work_id":"w1","type":"tv_series","feed_ref":"tvdb:1","items_known":3,"items_archived":2,"health":"healthy","created_at":"x"}]}"""),
             *extra,
@@ -94,11 +93,41 @@ class WorkDetailViewModelTest {
     }
 
     @Test fun aFailedReadIsPartialNotFatal() {
-        val s = vm(node("GET /assets?limit=200" to HttpResponse(500, ""))).state.value as WorkDetailUiState.Loaded
+        val s = vm(node("GET /works/w1/assets?limit=200" to HttpResponse(500, ""))).state.value as WorkDetailUiState.Loaded
         assertEquals("Dune", s.work.title)
         assertTrue(s.assets.isEmpty())
         assertEquals(1, s.wants.size)
         assertTrue(s.partialError!!.startsWith("assets:"))
+    }
+
+    @Test fun headerCarriesExternalIds() {
+        val s = vm(node()).state.value as WorkDetailUiState.Loaded
+        assertEquals(mapOf("tmdb" to "438631"), s.work.externalIds)
+    }
+
+    @Test fun editReplacesTheHeaderAndKeepsExternalIds() {
+        // PATCH returns a Work without external_ids; the VM merges the prior ones back.
+        val v = vm(node("PATCH /works/w1" to HttpResponse(200, """{"id":"w1","content_type":"movie","work_key":"k","title":"Dune: Part One","sort_title":"dune part one","year":2021,"attributes":{},"created_at":"x","updated_at":"z"}""")))
+        v.editWork(one.rarebit.heyarr.mobile.library.WorkPatch(title = "Dune: Part One"))
+        val s = v.state.value as WorkDetailUiState.Loaded
+        assertEquals("Dune: Part One", s.work.title)
+        assertEquals(mapOf("tmdb" to "438631"), s.work.externalIds)
+        assertEquals("Saved.", s.notices[WorkDetailUiState.NOTICE_WORK])
+    }
+
+    @Test fun deleteMarksTheWorkDeletedOn204() {
+        val v = vm(node("DELETE /works/w1" to HttpResponse(204, "")))
+        v.deleteWork()
+        assertTrue((v.state.value as WorkDetailUiState.Loaded).deleted)
+    }
+
+    @Test fun deleteBlockedByAFollowedSourceSurfacesThe409() {
+        val detail = "still followed — DELETE /followed-sources/s1 first"
+        val v = vm(node("DELETE /works/w1" to HttpResponse(409, """{"status":409,"detail":"$detail"}""")))
+        v.deleteWork()
+        val s = v.state.value as WorkDetailUiState.Loaded
+        assertFalse(s.deleted)
+        assertEquals(detail, s.notices[WorkDetailUiState.NOTICE_WORK])
     }
 
     @Test fun cancelRemovesTheWantOn204() {

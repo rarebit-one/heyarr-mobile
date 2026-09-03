@@ -29,12 +29,21 @@ sealed interface WorkDetailUiState {
         val busy: Set<String> = emptySet(),
         /** Set when the assets or wants read failed; the header still shows. */
         val partialError: String? = null,
+        /** True once `DELETE /works/{id}` took — the host pops back to the list (#428). */
+        val deleted: Boolean = false,
     ) : WorkDetailUiState {
 
         fun starting(target: String): Loaded = copy(busy = busy + target, notices = notices - target)
 
         fun noticed(target: String, message: String): Loaded =
             copy(busy = busy - target, notices = notices + (target to message))
+
+        /** The work's catalogue facts were corrected in place (a `PATCH /works/{id}` response). */
+        fun workReplaced(updated: Work): Loaded =
+            copy(work = updated, busy = busy - NOTICE_WORK, notices = notices + (NOTICE_WORK to "Saved."))
+
+        /** The work was removed: mark it so the host navigates away (#428). */
+        fun workDeleted(): Loaded = copy(busy = busy - NOTICE_WORK, deleted = true)
 
         /** A want was cancelled: drop it, clear its notice. */
         fun wantRemoved(wantId: String): Loaded =

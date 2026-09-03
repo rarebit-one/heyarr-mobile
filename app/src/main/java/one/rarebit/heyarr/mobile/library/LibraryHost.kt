@@ -71,6 +71,10 @@ fun LibraryHost(
         onRetry = vm::retry,
         onSearchAgain = vm::searchAgain,
         onRemoveAsset = vm::removeAsset,
+        onEditWork = vm::editWork,
+        onDeleteWork = vm::deleteWork,
+        // The work is gone: pop back to the list and refresh it so the row disappears.
+        onWorkDeleted = { selected = null; onRefresh() },
         onOpenSource = onOpenSource,
         onAuthorityRecheck = onAuthorityRecheck,
         modifier = modifier,

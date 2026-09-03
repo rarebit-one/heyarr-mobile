@@ -12,7 +12,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import one.rarebit.heyarr.mobile.HeyarrConfig
 import one.rarebit.heyarr.mobile.auth.Credential
-import one.rarebit.heyarr.mobile.library.WorkDetailClient
 import one.rarebit.heyarr.mobile.net.HttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
 
@@ -22,8 +21,8 @@ import one.rarebit.heyarr.mobile.net.OkHttpTransport
  * `POST /api/v1/desired` (`monitor:false`) and **Follow** on
  * `POST /api/v1/followed-sources` ([AcquireClient]); the Following list on
  * `GET /api/v1/followed-sources` and unfollow on `DELETE /api/v1/followed-sources/{id}`
- * ([FollowingClient]); and one source's detail (the list row + the wants it projected,
- * `GET /desired?work_id=` via [WorkDetailClient]).
+ * ([FollowingClient]); and one source's detail (the subscription + the items it has
+ * archived, `GET /followed-sources/{id}` + `/items` via [FollowedSourceClient], #430).
  *
  * Blocking transport calls run on [io]; the UI observes the flows. The
  * arithmetic-free, network-free state transitions live in [SearchUiState]/[AcquireState]
@@ -51,7 +50,7 @@ class SearchViewModel(
     }
     private val following by lazy { FollowingClient(transport, config.baseUrl, credential) }
     private val session by lazy { SessionClient(transport, config.baseUrl, credential) }
-    private val detailClient by lazy { WorkDetailClient(transport, config.baseUrl, credential) }
+    private val sourceClient by lazy { FollowedSourceClient(transport, config.baseUrl, credential) }
 
     private val _searchState = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
     val searchState: StateFlow<SearchUiState> = _searchState.asStateFlow()
@@ -167,7 +166,7 @@ class SearchViewModel(
 
     private var openSourceId: String? = null
 
-    /** Open the detail for [sourceId]: the list row (re-read) plus the wants it projected. */
+    /** Open the detail for [sourceId]: the subscription plus the items it has archived (#430). */
     fun openSource(sourceId: String) {
         openSourceId = sourceId
         // Show the row we already have while the reads run.
@@ -176,26 +175,26 @@ class SearchViewModel(
         reloadSource()
     }
 
-    /** Re-read the open source (there is no `GET /followed-sources/{id}`; the list is re-read). */
+    /** Re-read the open source (`GET /followed-sources/{id}`) and its archive (`/items`, #430). */
     fun reloadSource() {
         val id = openSourceId ?: return
         _sourceDetailRefreshing.value = true
         viewModelScope.launch {
             val next = withContext(io) {
-                val sources = runCatching { following.list() }
-                val source = sources.getOrNull()?.firstOrNull { it.id == id }
-                when {
-                    sources.isFailure -> (_sourceDetail.value as? SourceDetailUiState.Loaded)
-                        ?.copy(error = sources.exceptionOrNull()?.message ?: "failed to load source")
-                        ?: SourceDetailUiState.Error(sources.exceptionOrNull()?.message ?: "failed to load source")
-                    source == null -> (_sourceDetail.value as? SourceDetailUiState.Loaded)?.copy(gone = true, busy = false)
-                        ?: SourceDetailUiState.Error("This source is no longer followed.")
-                    else -> {
-                        val items = source.workId?.let { w -> runCatching { detailClient.wantsForWork(w) } }
+                val read = runCatching { sourceClient.source(id) }
+                when (val r = read.getOrNull()) {
+                    null -> (_sourceDetail.value as? SourceDetailUiState.Loaded)
+                        ?.copy(error = read.exceptionOrNull()?.message ?: "failed to load source")
+                        ?: SourceDetailUiState.Error(read.exceptionOrNull()?.message ?: "failed to load source")
+                    is FollowedSourceClient.SourceResult.Gone ->
+                        (_sourceDetail.value as? SourceDetailUiState.Loaded)?.copy(gone = true, busy = false)
+                            ?: SourceDetailUiState.Error("This source is no longer followed.")
+                    is FollowedSourceClient.SourceResult.Found -> {
+                        val items = runCatching { sourceClient.items(id) }
                         SourceDetailUiState.Loaded(
-                            source = source,
-                            items = items?.getOrDefault(emptyList()) ?: emptyList(),
-                            itemsError = items?.exceptionOrNull()?.let { "items: ${it.message}" },
+                            source = r.source,
+                            items = items.getOrDefault(emptyList()),
+                            itemsError = items.exceptionOrNull()?.let { "items: ${it.message}" },
                         )
                     }
                 }
