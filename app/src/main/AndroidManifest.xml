@@ -73,6 +73,20 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="heyarr-mobile" android:host="pair" />
             </intent-filter>
+            <!-- Same-phone handoff DISCOVERY (voidbind-kmp ADR-0009): advertise to
+                 Cruciform that we can receive a Voidbind pairing handoff, so it lists a
+                 "Send to heyarr on this phone" button WITHOUT a hard-coded registry entry.
+                 Data-less by design — Cruciform's discovery probe (a VIEW intent carrying
+                 only the RP_HANDOFF category) cannot match a scheme://pair filter, so this
+                 dedicated filter advertises the capability and the meta-data below names
+                 the scheme Cruciform should fire (heyarr-mobile://pair, the filter above). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="one.rarebit.voidbind.category.RP_HANDOFF" />
+            </intent-filter>
+            <meta-data
+                android:name="one.rarebit.voidbind.rp.pair_scheme"
+                android:value="heyarr-mobile" />
             <!-- `heyarr-mobile://pair-done?session=…` — the return leg of the same-phone
                  one-tap enrolment (voidbind-kmp ADR-0008). Cruciform opens it once it has
                  signed and delivered the admission, so the human lands back here, on the
