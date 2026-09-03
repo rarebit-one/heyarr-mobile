@@ -45,7 +45,6 @@ import one.rarebit.heyarr.mobile.settings.SettingsStore
 import one.rarebit.voidbind.Membership
 import one.rarebit.voidbind.MembershipOp
 import one.rarebit.voidbind.auth.DeviceCredential
-import one.rarebit.voidbind.auth.PossessionProof
 import one.rarebit.voidbind.flow.PairingFailureKind
 import one.rarebit.voidbind.flow.PairingOutcome
 
@@ -445,12 +444,14 @@ class AppViewModel(
         val adopted = withContext(Dispatchers.IO) {
             runCatching {
                 val identity = ring.identity()
+                // Short proofs at the library default (PossessionProof.DEFAULT_TTL_SECONDS,
+                // 2 min; reused for ttl − skew): the device key's 1-hour user-auth window
+                // (DeviceKeyring.USER_AUTH_VALIDITY_SECONDS) lets each re-mint sign silently,
+                // so a short proof no longer costs a biometric — heyarr-core#444.
                 val live = DeviceCredential(
                     certToken = certToken,
                     signer = identity.asSigner(),
                     clock = { System.currentTimeMillis() / 1000 },
-                    ttlSeconds = DEVICE_PROOF_TTL_SECONDS,
-                    reuseForSeconds = DEVICE_PROOF_REUSE_SECONDS,
                 )
                 val first = live.current() // mints the first proof — may prompt
                 deviceCredential = live
@@ -590,23 +591,6 @@ class AppViewModel(
 
     /** A human-readable name for the node's device registry. */
     var deviceName: String = "heyarr-mobile"
-
-    private companion object {
-        /**
-         * How long one possession proof is reused before the app re-signs. Each signature
-         * unseals the device key behind a 30 s user-presence window, so the Go default
-         * (2 min) would mean a biometric prompt every couple of minutes of use; the server
-         * checks `exp` strictly but does not cap it. Re-minted early on a 401 regardless.
-         */
-        const val DEVICE_PROOF_TTL_SECONDS = 60L * 60
-
-        /**
-         * How long the live proof is REUSED before a proactive re-mint: until it is within
-         * the server's skew window of expiry (the library default, spelled out here so the
-         * biometric cadence is a deliberate app choice, not an inherited one).
-         */
-        const val DEVICE_PROOF_REUSE_SECONDS = DEVICE_PROOF_TTL_SECONDS - PossessionProof.SKEW_SECONDS
-    }
 
     /**
      * Open the player for a tapped [work]. A row that carries a content hash streams

@@ -42,9 +42,13 @@ This is a **scaffold**: a buildable, tested foundation. Feature work lands as PR
   key (`DeviceIdentity.asSigner()` over voidbind-client `DeviceKeyStore`, voidbind-kmp
   ADR-0001: software seed sealed by a non-extractable, user-presence-gated AES key —
   StrongBox where present, **TEE on the Nothing Phone**; `device/DeviceKeyring` reports
-  the honest tier). `AppViewModel` builds the `DeviceCredential` with a **1 h ttl reused
-  for ttl − skew** (`DEVICE_PROOF_TTL_SECONDS` / `DEVICE_PROOF_REUSE_SECONDS`, passed
-  explicitly as `reuseForSeconds`) so the biometric cadence is one prompt an hour;
+  the honest tier). Since voidbind-client **0.6.0** the signing key is provisioned with a
+  **1-hour user-auth window** (`DeviceKeyring.USER_AUTH_VALIDITY_SECONDS`, the library's
+  `getOrCreate(alias, userAuthValiditySeconds)`), so one biometric authorises an hour of
+  silent signing and `AppViewModel` builds the `DeviceCredential` at the **library default
+  short ttl** (`PossessionProof.DEFAULT_TTL_SECONDS`, 2 min, reused for ttl − skew) —
+  restoring heyarr-core#444's short-proof cadence. The window is baked in at key creation,
+  so this is a **new alias** and the phone re-enrols once (Path A, see below);
   `net/DeviceAuthTransport` drives `DeviceAuthPolicy.execute` — refresh + retry **once**
   on a 401 (heyarr's Device refusals are all an undifferentiated 401) — and owns the
   `Voidbind-Membership` header (`MEMBERSHIP_HEADER`): since voidbind-client **0.5.0**
@@ -131,7 +135,9 @@ composite build against an unpublished voidbind-kmp change, see the commented
 ## Enrolment (device/) — this phone is the NEW device, joining a member's invite
 
 `device/DeviceKeyring` owns the keys: the sealed Ed25519 signer (`DeviceKeyStore`, alias
-`heyarr-device`, biometric-gated via `device/BiometricGate` — hence `MainActivity` is a
+`heyarr-device.authorising` — the 1-hour-window key of heyarr-core#444, a distinct alias
+from the original `heyarr-device` so a phone with the old key **re-enrols** once, Path A;
+biometric-gated via `device/BiometricGate` — hence `MainActivity` is a
 `FragmentActivity`), the X25519 enc key sealed at rest by `device/SealedSecretStore`, and
 the stored **admission** — `cert.<alias>.token` (the admitting op = credential token) plus
 `ops.<alias>.json` (the replica; `knownOps()` always folds the own op back in). Under

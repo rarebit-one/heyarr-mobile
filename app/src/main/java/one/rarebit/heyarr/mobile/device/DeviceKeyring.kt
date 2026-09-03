@@ -81,10 +81,27 @@ class DeviceKeyring(
      */
     fun peek(): DeviceKeyInfo? = if (isProvisioned()) info() else null
 
-    /** Open (or on first run, provision) the signing key. May prompt for user presence. */
+    /**
+     * Open (or on first run, provision) the signing key. May prompt for user presence.
+     *
+     * Provisioned with a **1-hour** user-authentication window
+     * ([USER_AUTH_VALIDITY_SECONDS], voidbind-client 0.6.0's
+     * `setUserAuthenticationParameters` timeout): one biometric authorises this key to
+     * sign silently for the next hour, so the app mints short (default 2 min) possession
+     * proofs and re-mints per request/batch without a fingerprint every couple of
+     * minutes — the cadence heyarr-core#444 (restoring ADR-0070's 10 min ceiling)
+     * intended. The window is baked in at creation and cannot be changed on an existing
+     * key, so this is a **new alias** ([DEFAULT_ALIAS]): the seed is namespaced per alias
+     * (voidbind-client `DeviceKeyStore`), so this key's **public key is new** and the
+     * phone **re-enrols** through the existing pairing flow (Path A / heyarr-core#444 —
+     * the previous 30 s-window key is left on disk unused, and its old member is removed
+     * operationally in Cruciform). The app never signs an *authorising* act (it is only
+     * ever the joining device in a pairing, mints possession proofs, and enrols), so no
+     * separate strict-window alias is needed.
+     */
     fun keyStore(): DeviceKeyStore =
         gate.gated("Set up this device", "Confirm it's you to create the device key") {
-            DeviceKeyStore.getOrCreate(alias)
+            DeviceKeyStore.getOrCreate(alias, userAuthValiditySeconds = USER_AUTH_VALIDITY_SECONDS)
         }
 
     /** The sealed X25519 keypair, generated once on first use. */
@@ -180,7 +197,22 @@ class DeviceKeyring(
     }
 
     companion object {
-        const val DEFAULT_ALIAS = "heyarr-device"
+        /**
+         * The signing-key alias. The `.authorising` suffix (voidbind-client's documented
+         * convention for a long-window key) marks this as the 1-hour-window key introduced
+         * for heyarr-core#444: a *distinct* alias from the original `heyarr-device`, so it
+         * is a new sealed seed with a new public key and the phone re-enrols (Path A).
+         */
+        const val DEFAULT_ALIAS = "heyarr-device.authorising"
+
+        /**
+         * The user-authentication validity window for the signing key's wrapping key
+         * (seconds). 1 hour: one biometric covers an hour of short possession-proof
+         * minting. Strict per-signature biometric is reserved for authorising acts, which
+         * this app does not perform — see [keyStore].
+         */
+        const val USER_AUTH_VALIDITY_SECONDS = 60 * 60
+
         private const val ENC_SECRET = "enc"
         private const val OPS_KEY = "ops"
     }
