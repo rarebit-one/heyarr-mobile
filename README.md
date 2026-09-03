@@ -86,6 +86,66 @@ These need real hardware / a live server and can't be proven in CI:
 - **Subsonic/OPDS/DLNA reach** — deciding whether to ship the compat adapters at all vs. leaning
   on the native API; `library/SubsonicClient` marks the fork as a decision, not an omission.
 
+## Releases — signed APKs, installed and updated via Obtainium
+
+Debug builds are a dead end: they are signed with the throwaway debug key, so they can
+never be updated in place by a real release. Every tagged version is therefore built as
+a **signed release APK** and attached to a GitHub Release, and the phone tracks that
+Release feed through [Obtainium](https://github.com/ImranR98/Obtainium).
+
+### Cutting a release
+
+```sh
+git tag v0.2.1          # `v<major>.<minor>.<patch>`
+git push origin v0.2.1
+```
+
+`.github/workflows/release.yml` picks the tag up, builds `:app:assembleRelease`, verifies the
+APK with `apksigner verify --print-certs`, and publishes the Release with
+`heyarr-mobile-0.2.1.apk` attached. `versionName` comes from the tag; `versionCode` is derived from it
+(`major*10000 + minor*100 + patch`), so neither is ever hand-edited.
+
+### Signing
+
+`signingConfigs.release` reads four values, from the environment first and gradle
+properties second — nothing is committed, and `*.jks` is git-ignored:
+
+| Env | Gradle property | What |
+|-----|-----------------|------|
+| `RELEASE_KEYSTORE_BASE64` | `release.keystoreBase64` | the keystore, base64 |
+| `RELEASE_KEYSTORE_PASSWORD` | `release.keystorePassword` | store password |
+| `RELEASE_KEY_ALIAS` | `release.keyAlias` | `one.rarebit.heyarr.mobile` |
+| `RELEASE_KEY_PASSWORD` | `release.keyPassword` | key password |
+
+With none of them set the release build type is simply **unsigned** — a local
+`assembleRelease` still works. CI supplies them from the repo secrets of the same
+names. The keystore itself (RSA 4096, 25 years) lives at
+`~/.config/rarebit-android-signing/heyarr-mobile.jks` and in **1Password → Sysadmins**.
+Losing it means no user can ever update in place again.
+
+Build a signed APK locally:
+
+```sh
+export RELEASE_KEYSTORE_BASE64=$(base64 -i ~/.config/rarebit-android-signing/heyarr-mobile.jks | tr -d '\n')
+export RELEASE_KEYSTORE_PASSWORD=$(cat ~/.config/rarebit-android-signing/heyarr-mobile.password)
+export RELEASE_KEY_PASSWORD="$RELEASE_KEYSTORE_PASSWORD"
+export RELEASE_KEY_ALIAS=one.rarebit.heyarr.mobile
+./gradlew :app:assembleRelease -PreleaseVersionName=v0.2.1
+```
+
+### Obtainium
+
+`obtainium.json` is the source config, importable via Obtainium → **Import/Export →
+Import from a file** (or add it by hand: **Add App** → URL
+`https://github.com/rarebit-one/heyarr-mobile`, source GitHub):
+
+- APK filter regex: `heyarr-mobile-.*\.apk`
+- Version extraction regex: `^v(.*)$`, match group `1`
+- Include pre-releases: off
+
+Obtainium needs a GitHub token for this **private** repo (Settings → Source-specific →
+GitHub → Personal Access Token).
+
 ## License
 
 [GNU AGPL v3](./LICENSE) — matching `rarebit-one/heyarr-core`.
