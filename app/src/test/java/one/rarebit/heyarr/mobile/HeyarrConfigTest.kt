@@ -8,9 +8,10 @@ import org.junit.Test
 /** Config resolution: build default → runtime override, with URL normalisation. */
 class HeyarrConfigTest {
 
-    @Test fun buildDefaultIsTheLiveNodeOverPlainHttp() {
-        // The gradle default (`heyarrBaseUrl` unset) is the Bartley Ridge node on the LAN.
-        assertEquals("http://192.168.16.224:7777", HeyarrConfig.DEFAULT_BASE_URL)
+    @Test fun buildDefaultIsTheLiveNodeOverInternalTls() {
+        // The gradle default (`heyarrBaseUrl` unset) is the Bartley Ridge node, now
+        // served over internal TLS (valid Let's Encrypt cert on the .br.thesim.family name).
+        assertEquals("https://heyarr.br.thesim.family:7777", HeyarrConfig.DEFAULT_BASE_URL)
         assertEquals(HeyarrConfig.DEFAULT_BASE_URL, HeyarrConfig().baseUrl)
         assertEquals("living-room", HeyarrConfig().defaultQualityProfile)
     }

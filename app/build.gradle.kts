@@ -57,13 +57,16 @@ android {
         versionName = releaseVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Where the app points by default: the live Bartley Ridge heyarr node (plain
-        // HTTP on the LAN, reachable via the Tailscale subnet route when out). Override
-        // at build time with `-PheyarrBaseUrl=…` (or in gradle.properties); override at
-        // runtime from the in-app Settings screen (persisted in SharedPreferences).
+        // Where the app points by default: the live Bartley Ridge heyarr node, now
+        // served over internal TLS (valid Let's Encrypt cert at
+        // https://heyarr.br.thesim.family:7777, reachable on the LAN and via the
+        // Tailscale subnet route when out). Override at build time with
+        // `-PheyarrBaseUrl=…` (or in gradle.properties); override at runtime from the
+        // in-app Settings screen (persisted in SharedPreferences) — e.g. back to the
+        // plain-http node IP as a fallback while TLS beds in.
         val heyarrBaseUrl = (project.findProperty("heyarrBaseUrl") as String?)
             ?.trim()?.takeIf { it.isNotEmpty() }
-            ?: "http://192.168.16.224:7777"
+            ?: "https://heyarr.br.thesim.family:7777"
         buildConfigField("String", "HEYARR_BASE_URL", "\"$heyarrBaseUrl\"")
     }
 
