@@ -32,6 +32,13 @@ import one.rarebit.heyarr.mobile.net.DeviceAuthTransport
 import one.rarebit.heyarr.mobile.net.HttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpVoidbindTransport
+import one.rarebit.heyarr.mobile.catalog.ContinueClient
+import one.rarebit.heyarr.mobile.consumption.ConsumptionClient
+import one.rarebit.heyarr.mobile.consumption.ConsumptionReporter
+import one.rarebit.heyarr.mobile.consumption.DeviceIdStore
+import one.rarebit.heyarr.mobile.consumption.InMemoryDeviceIdStore
+import one.rarebit.heyarr.mobile.playback.AudioPlayer
+import one.rarebit.heyarr.mobile.playback.AudioSessionBridge
 import one.rarebit.heyarr.mobile.playback.PlaybackCoordinator
 import one.rarebit.heyarr.mobile.search.SessionAuthority
 import one.rarebit.heyarr.mobile.search.SessionClient
@@ -82,6 +89,8 @@ class AppViewModel(
      * [transport] wraps for Device auth.
      */
     private val rawTransport: HttpTransport = OkHttpTransport(),
+    /** Where this phone's node-issued device ids live (SharedPreferences on the phone). */
+    private val deviceIds: DeviceIdStore = InMemoryDeviceIdStore(),
 ) : ViewModel() {
 
     /**
@@ -110,12 +119,46 @@ class AppViewModel(
      * (playback/PlaybackCoordinator). Reads the credential and node per call, so it
      * follows a sign-in, an enrolment and a Settings change without being rebuilt.
      */
-    val playback: PlaybackCoordinator = PlaybackCoordinator(
-        transport = transport,
-        baseUrl = { config.baseUrl },
-        credential = { credential },
-        scope = viewModelScope,
-    )
+    val playback: PlaybackCoordinator by lazy {
+        PlaybackCoordinator(
+            transport = transport,
+            baseUrl = { config.baseUrl },
+            credential = { credential },
+            scope = viewModelScope,
+            reporter = reporter,
+            resumeAt = { assetId ->
+                val cred = credential ?: return@PlaybackCoordinator null
+                val rail = ContinueClient(transport, config.baseUrl, cred).rail() as? ContinueClient.Outcome.Rail
+                rail?.entries?.firstOrNull { it.assetId == assetId }?.positionSeconds
+            },
+        )
+    }
+
+    /**
+     * Tells the node where playback reached (§67): silent until this credential can
+     * write, i.e. an enrolled, authorised device. The device registers itself once per
+     * node under its enrolled key.
+     */
+    private val reporter: ConsumptionReporter by lazy {
+        ConsumptionReporter(
+            client = ConsumptionClient(transport, { config.baseUrl }, { credential }),
+            store = deviceIds,
+            scope = viewModelScope,
+            baseUrl = { config.baseUrl },
+            canWrite = { _sessionAuthority.value?.canWrite == true },
+            enrolledDeviceKey = { _sessionAuthority.value?.deviceKey },
+            deviceName = { deviceName },
+            capabilities = { playback.capabilities },
+        )
+    }
+
+    /** The audio queue reports too: a track is a `listen` session. Attach once from the Activity. */
+    fun attachAudio(audio: AudioPlayer) {
+        if (audioBridge != null) return
+        audioBridge = AudioSessionBridge(audio, reporter, viewModelScope)
+    }
+
+    private var audioBridge: AudioSessionBridge? = null
 
     private val _config = MutableStateFlow(resolveConfig())
     val configState: StateFlow<HeyarrConfig> = _config.asStateFlow()

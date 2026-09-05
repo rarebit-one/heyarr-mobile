@@ -195,6 +195,10 @@ app/src/main/java/one/rarebit/heyarr/mobile/
                 order; Play → the audio QUEUE, never the video surface)
   reader/       ReaderFormat (EPUB/PDF/CBZ/CBR/audiobook by MIME then filename) + ReaderEntryScreen (the seam the
                 Readium reader plugs into; an audiobook already plays through the queue)
+  consumption/  ConsumptionClient (POST /devices once per node, POST /consumption/sessions, .../transitions) ·
+                DeviceIdStore (our stable device_key + each node's device id) · ProgressReporter seam +
+                ConsumptionReporter (silent unless the credential can write; one worker, ordered; throttled ticks;
+                a 409 drops the session) — the phone's playback history, and what the Continue row resumes from
   discover/     DiscoverClient (POST /discover — the "find more online" door; 404/503 = Unavailable, not an error)
   settings/     SettingsStore (SharedPreferences; in-memory for tests) + SettingsScreen
   auth/         Credential (Device/Session header snapshot — Device renders via the library)

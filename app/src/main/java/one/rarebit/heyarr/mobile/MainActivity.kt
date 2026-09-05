@@ -123,6 +123,7 @@ class MainActivity : FragmentActivity() {
                                 settings = app.graph.settings,
                                 pairing = app.pairing,
                                 rawTransport = app.graph.rawTransport,
+                                deviceIds = app.graph.deviceIds,
                             )
                         }
                     },
@@ -136,6 +137,7 @@ class MainActivity : FragmentActivity() {
                     vm.attachDevice(keyring)
                     // What this phone can decode, for the playback planner (#432).
                     vm.playback.capabilities = MediaCodecCapabilities.probe(appContext)
+                    vm.attachAudio(app.graph.audio)
                 }
                 // The "Pairing with Cruciform…" foreground-service notification needs this
                 // on Android 13+; the service runs regardless, the notice just stays hidden.

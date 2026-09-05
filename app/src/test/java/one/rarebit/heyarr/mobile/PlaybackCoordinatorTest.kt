@@ -129,3 +129,42 @@ class PlaybackCoordinatorTest {
         assertNull(c.nowPlaying.value)
     }
 }
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class PlaybackCoordinatorResumeTest {
+    private val dispatcher = UnconfinedTestDispatcher()
+    private val hash = "blake3:" + "b".repeat(64)
+
+    private class Spy : one.rarebit.heyarr.mobile.consumption.ProgressReporter {
+        val events = ArrayList<String>()
+        override fun begin(assetId: String, verb: String) { events.add("begin:$assetId:$verb") }
+        override fun progress(seconds: Double) { events.add("progress:$seconds") }
+        override fun pause(seconds: Double) { events.add("pause") }
+        override fun resume(seconds: Double) { events.add("resume") }
+        override fun end(seconds: Double, completed: Boolean) { events.add("end:$completed") }
+    }
+
+    @Test fun aPlayLooksUpTheResumePositionAndOpensASession() {
+        val spy = Spy()
+        val c = PlaybackCoordinator(RoutedTransport(emptyMap()), { "https://h" }, { Credential.Session("t") }, CoroutineScope(dispatcher), dispatcher,
+            reporter = spy, resumeAt = { id -> if (id == "a1") 1284.5 else null })
+        c.play(Work(id = "w1", title = "Arrival", blobHash = hash, mime = "video/mp4", primaryAssetId = "a1"))
+        val np = c.nowPlaying.value!!
+        assertEquals(1284.5, np.startSeconds, 0.0)
+        assertEquals("watch", np.verb)
+        assertEquals(listOf("begin:a1:watch"), spy.events)
+        c.reportProgress(1300.0); c.reportEnded(1400.0, completed = false)
+        assertEquals(listOf("begin:a1:watch", "progress:1300.0", "end:false"), spy.events)
+    }
+
+    @Test fun aKnownStartSkipsTheLookupAndAudioIsAListen() {
+        val spy = Spy()
+        var looked = false
+        val c = PlaybackCoordinator(RoutedTransport(emptyMap()), { "https://h" }, { Credential.Session("t") }, CoroutineScope(dispatcher), dispatcher,
+            reporter = spy, resumeAt = { looked = true; 5.0 })
+        c.playFile("Track", "a9", hash, "audio/flac", "music", startSeconds = 42.0)
+        assertEquals(42.0, c.nowPlaying.value!!.startSeconds, 0.0)
+        assertEquals("listen", c.nowPlaying.value!!.verb)
+        assertFalse(looked)
+    }
+}
