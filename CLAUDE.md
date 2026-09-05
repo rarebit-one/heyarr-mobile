@@ -175,7 +175,27 @@ unwrap + a local **Personal MCP** (#372/#387) are device-gated follow-ups.
 
 ```
 app/src/main/java/one/rarebit/heyarr/mobile/
-  MainActivity.kt · HeyarrApp.kt (Application: the app-scoped pairing holder) · AppViewModel.kt · HeyarrConfig.kt (BuildConfig default → Settings override)
+  MainActivity.kt · HeyarrApp.kt (Application: the app-scoped pairing holder + Coil ImageLoaderFactory) ·
+  AppGraph.kt (by-hand object graph: settings, ONE OkHttp client + AuthInterceptor, AuthHeaderSource — no DI
+  container) · AppViewModel.kt (session/config/enrol; playback lives in playback/PlaybackCoordinator) ·
+  HeyarrConfig.kt (BuildConfig default → Settings override)
+  nav/          Routes (typed, @Serializable — ids and display hints ONLY, never a target or a credential;
+                Player is argless) · HeyarrNavHost (bottom bar Home/Search/Library/Device over Navigation-Compose;
+                the player is a full-screen route, not an overlay) · ApiEnv (one baseUrl+credential+transport
+                snapshot; every screen's ViewModel is keyed on it)
+  home/         HomeScreen (hub cards + a recently-added poster row per hub) · HomeViewModel + HomeState (rows load
+                independently — one hub failing never blanks the others) · PosterCard / WorkRow
+  hub/          HubScreen (poster grid, content-type chips, newest/A–Z, node-side paging) + HubViewModel
+  catalog/      CatalogClient (GET /works?sort=&include=artwork,primary_asset, one page at a time; `recent`
+                re-sorts client-side so an older node that ignores sort= is still right) · Artwork (poster URL:
+                the `artwork` embed's blob route, else GET /works/{id}/artwork which 307s or 404s)
+  ui/           Poster (per-hub aspect + glyph placeholder; a 404 is a normal work without art, not an error)
+  music/        MusicClient (GET /artists; 404 → client-side grouping on attributes.artist) + MusicJson ·
+                Artists/Artist/Album screens + ViewModels (an album's tracks = its playable audio assets, filename
+                order; Play → the audio QUEUE, never the video surface)
+  reader/       ReaderFormat (EPUB/PDF/CBZ/CBR/audiobook by MIME then filename) + ReaderEntryScreen (the seam the
+                Readium reader plugs into; an audiobook already plays through the queue)
+  discover/     DiscoverClient (POST /discover — the "find more online" door; 404/503 = Unavailable, not an error)
   settings/     SettingsStore (SharedPreferences; in-memory for tests) + SettingsScreen
   auth/         Credential (Device/Session header snapshot — Device renders via the library)
   device/       DeviceKeyring (sealed keys + admission: op + ops) · BiometricGate · SealedSecretStore ·
@@ -184,19 +204,28 @@ app/src/main/java/one/rarebit/heyarr/mobile/
                 (poll to the relay TTL) + PairingForegroundService + PrefsPendingPairingStore · MembershipOps
                 (what to present, ≤ 64) · MembershipClient (GET /membership/{usr}) · HandoffLauncher
   login/        QR login over voidbind-client (LoginTuple façade, QrLoginClient, VoidbindHandoff, screen)
-  library/      LibraryClient (native /api/v1/works, paged, recent-first) + WorksJson + SubsonicClient stub
-                + LibraryScreen (pull-to-refresh) → LibraryHost → WorkDetail{Client,Json,State,ViewModel,Screen}
-                (assets via /assets+/editions+/blobs, wants via /desired?work_id, cancel/pause/retry/search a
-                want, remove an asset — every write gated on GET /session authority; no delete-a-work route exists)
-  playback/     PlaybackClient (blob-stream target + /playback/plan) + Media3 player
-                (HeyarrDataSource auth+Range data source, PlayerScreen, PlaybackTarget/Json)
+  library/      LibraryClient (native /api/v1/works, paged, recent-first — the Library/Manage list) + WorksJson
+                (reads the ADR-0075 embeds from their own slices) + SubsonicClient stub + LibraryScreen (the
+                management list, pull-to-refresh) · WorkDetail{Client,Json,State,ViewModel,Screen} (poster header +
+                one-tap Play; files, wants, followed source; Manage is an expander, open when reached from Library)
+  playback/     PlaybackCoordinator (what is playing and how: plan against real capabilities, blob fallback, ONE
+                re-plan on a codec issue — unit-tested over a scripted transport) · PlaybackClient (blob-stream
+                target + /playback/plan) + Media3 player (HeyarrDataSource auth+Range data source, PlayerScreen,
+                PlaybackTarget/Json) · AudioPlayer seam (AudioItem/AudioState) + InProcessAudioPlayer (one
+                ExoPlayer for the process over the shared OkHttp client — music outlives the screen; the
+                MediaSessionService swap-in is the follow-up) + MiniPlayer + NowPlayingScreen · MediaMime
   personalstate/ PersonalStateClient (opaque spaces sync) + Unwrapper (decrypt-on-device seam)
-  search/       Search + Get-once/Follow (AcquireClient) · Following list (FollowingClient) → FollowingHost →
+  search/       Universal search: SearchScreen (library works with posters + episode hits + "find more online" +
+                followed-sources link) · SearchClient (POST /search → works + episodes) · AcquireClient (Get once /
+                Follow; followFeed = follow a DISCOVERED title by tvdb_id) · Following list (FollowingClient) →
                 FollowedSourceDetailScreen (feed/type/polls, projected items, unfollow w/ keep_archive choice)
+  catalog/      … + ContinueClient (GET /consumption/continue → the Home "Continue" row; 403/404 = row absent)
   net/          HttpTransport (get/post/delete/patch) + OkHttp actual · DeviceAuthTransport (library
                 DeviceAuthPolicy re-mint/retry, Voidbind-Membership header, onUnauthorized veto) ·
-                OkHttpVoidbindTransport (voidbind-client's seam) · JsonEscapes + JsonScan (the shared
-                hand-rolled reader primitives — no org.json) · Timestamps (RFC 3339 → epoch, recent-first)
+                AuthInterceptor (stamps the live credential on OUR node's /api/v1 fetches that carry none —
+                posters, range reads; never another host) + AuthHeaderSource · OkHttpVoidbindTransport
+                (voidbind-client's seam) · JsonEscapes + JsonScan (the shared hand-rolled reader primitives — no
+                org.json; kotlinx-serialization is for ROUTE ARGUMENTS only) · Timestamps (RFC 3339 → epoch)
 app/src/test/…  pure-JVM unit tests (no Android runtime)
 .github/workflows/android.yml   CI: testDebugUnitTest + assembleDebug on ubuntu-latest
 ```

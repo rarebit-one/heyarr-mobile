@@ -400,7 +400,7 @@ private fun buildMediaItem(target: PlaybackTarget, title: String): MediaItem {
     val builder = MediaItem.Builder()
         .setUri(target.contentUrl)
         .setMediaId(target.contentUrl)
-    mediaMimeType(target.mimeType)?.let { builder.setMimeType(it) }
+    MediaMime.of(target.mimeType)?.let { builder.setMimeType(it) }
     builder.setMediaMetadata(
         androidx.media3.common.MediaMetadata.Builder().setTitle(title).build(),
     )
@@ -411,13 +411,3 @@ private fun buildMediaItem(target: PlaybackTarget, title: String): MediaItem {
  * Map a server MIME to a Media3 container hint where a well-known one applies; an
  * unknown/absent MIME returns null and ExoPlayer sniffs the stream instead.
  */
-private fun mediaMimeType(mime: String?): String? = when (mime?.lowercase()) {
-    "video/mp4", "audio/mp4", "video/quicktime" -> MimeTypes.VIDEO_MP4
-    "video/webm", "audio/webm" -> MimeTypes.VIDEO_WEBM
-    "video/x-matroska", "video/matroska" -> MimeTypes.VIDEO_MATROSKA
-    "audio/mpeg", "audio/mp3" -> MimeTypes.AUDIO_MPEG
-    "audio/flac" -> MimeTypes.AUDIO_FLAC
-    "audio/ogg", "application/ogg" -> MimeTypes.AUDIO_OGG
-    "audio/aac" -> MimeTypes.AUDIO_AAC
-    else -> null
-}

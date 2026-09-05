@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 // ── Release version + signing ────────────────────────────────────────────────
@@ -123,8 +124,19 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // ── Navigation ───────────────────────────────────────────────────────────────
+    // Typed routes (nav/Routes.kt). kotlinx-serialization is here for ROUTE ARGUMENTS
+    // ONLY — wire JSON stays hand-read on net/JsonScan, the repo's convention.
+    implementation("androidx.navigation:navigation-compose:2.8.9")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3")
+    // Test-only: the route round-trip test encodes through JSON; the app never does.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
     // HTTP for the login seam, library browse, blob-stream and personal-state fetches.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Posters. Rides the SAME OkHttp client (AppGraph) so a poster fetch carries the
+    // credential through net/AuthInterceptor without ever seeing it.
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     // QR encoding for the `voidbind:login?…` tuple (pure Java — the BitMatrix half is
     // JVM-unit-tested; only the Bitmap conversion touches Android).

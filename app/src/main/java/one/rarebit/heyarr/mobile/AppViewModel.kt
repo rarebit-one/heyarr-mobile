@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import one.rarebit.heyarr.mobile.auth.Credential
 import one.rarebit.heyarr.mobile.device.DeviceKeyInfo
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
@@ -26,7 +25,6 @@ import one.rarebit.heyarr.mobile.device.PairingSteps
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.LibraryUiState
 import one.rarebit.heyarr.mobile.library.Work
-import one.rarebit.heyarr.mobile.library.WorkAsset
 import one.rarebit.heyarr.mobile.login.LoginUiState
 import one.rarebit.heyarr.mobile.login.QrLoginClient
 import one.rarebit.heyarr.mobile.login.VoidbindLogin
@@ -34,10 +32,7 @@ import one.rarebit.heyarr.mobile.net.DeviceAuthTransport
 import one.rarebit.heyarr.mobile.net.HttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpVoidbindTransport
-import one.rarebit.heyarr.mobile.playback.ClientCapabilities
-import one.rarebit.heyarr.mobile.playback.PlaybackClient
-import one.rarebit.heyarr.mobile.playback.PlaybackDiagnostics
-import one.rarebit.heyarr.mobile.playback.PlaybackTarget
+import one.rarebit.heyarr.mobile.playback.PlaybackCoordinator
 import one.rarebit.heyarr.mobile.search.SessionAuthority
 import one.rarebit.heyarr.mobile.search.SessionClient
 import one.rarebit.heyarr.mobile.settings.InMemorySettingsStore
@@ -47,20 +42,6 @@ import one.rarebit.voidbind.MembershipOp
 import one.rarebit.voidbind.auth.DeviceCredential
 import one.rarebit.voidbind.flow.PairingFailureKind
 import one.rarebit.voidbind.flow.PairingOutcome
-
-/**
- * A resolved item the player is showing: its stream target, a display title, the asset
- * it came from (so a decoder the phone lacks can be re-planned into a stream, once),
- * and a banner the app decided on after that re-plan.
- */
-data class NowPlaying(
-    val target: PlaybackTarget,
-    val title: String,
-    val assetId: String? = null,
-    val blobHash: String? = null,
-    val banner: String? = null,
-    val replanned: Boolean = false,
-)
 
 /** The steps of a ViewModel built without the app's holder (tests): every pairing fails honestly. */
 private object UnavailablePairingSteps : PairingSteps {
@@ -95,6 +76,12 @@ class AppViewModel(
         store = InMemoryPendingPairingStore(),
         steps = { UnavailablePairingSteps },
     ),
+    /**
+     * The raw transport — the shared OkHttp client on the phone (AppGraph), a bare one
+     * in tests. What the public, unauthenticated membership read uses, and what
+     * [transport] wraps for Device auth.
+     */
+    private val rawTransport: HttpTransport = OkHttpTransport(),
 ) : ViewModel() {
 
     /**
@@ -103,9 +90,6 @@ class AppViewModel(
      */
     @Volatile
     private var deviceCredential: DeviceCredential? = null
-
-    /** The raw transport — what the public, unauthenticated membership read uses. */
-    private val rawTransport: HttpTransport = OkHttpTransport()
 
     /**
      * The app's transport: every `/api/v1` request an enrolled device makes goes through
@@ -121,15 +105,17 @@ class AppViewModel(
         onUnauthorized = ::refreshMembership,
     )
 
-    /** Shared OkHttp client for the Media3 blob-stream data source. */
-    val httpClient: OkHttpClient = OkHttpClient()
-
     /**
-     * What this phone can decode, for `POST /playback/plan` (heyarr-core #432). Set by
-     * the Activity from `MediaCodecList`; null (tests, or before attach) means "don't
-     * plan — stream the blob directly, exactly as before the contract".
+     * What is playing and how it came to be: planning, fallback and the one re-plan
+     * (playback/PlaybackCoordinator). Reads the credential and node per call, so it
+     * follows a sign-in, an enrolment and a Settings change without being rebuilt.
      */
-    var capabilities: ClientCapabilities? = null
+    val playback: PlaybackCoordinator = PlaybackCoordinator(
+        transport = transport,
+        baseUrl = { config.baseUrl },
+        credential = { credential },
+        scope = viewModelScope,
+    )
 
     private val _config = MutableStateFlow(resolveConfig())
     val configState: StateFlow<HeyarrConfig> = _config.asStateFlow()
@@ -147,18 +133,6 @@ class AppViewModel(
     private val _libraryRefreshing = MutableStateFlow(false)
     val libraryRefreshing: StateFlow<Boolean> = _libraryRefreshing.asStateFlow()
 
-    private val _nowPlaying = MutableStateFlow<NowPlaying?>(null)
-    val nowPlaying: StateFlow<NowPlaying?> = _nowPlaying.asStateFlow()
-
-    /** A transient notice when an item cannot be streamed directly (negotiation-gated). */
-    private val _playbackNotice = MutableStateFlow<String?>(null)
-    val playbackNotice: StateFlow<String?> = _playbackNotice.asStateFlow()
-
-    /**
-     * This session's authority as `GET /api/v1/session` reports it (who we are signed
-     * in as, and whether the session is read-only). Null until loaded or if the read
-     * failed — the UI treats unknown as read-only, the safe floor.
-     */
     private val _sessionAuthority = MutableStateFlow<SessionAuthority?>(null)
     val sessionAuthority: StateFlow<SessionAuthority?> = _sessionAuthority.asStateFlow()
 
@@ -170,6 +144,14 @@ class AppViewModel(
      * driven with the same authenticated identity that browses the library.
      */
     fun credentialOrNull(): Credential? = credential
+
+    /**
+     * The `Authorization` value in force right now, for fetches that go around the API
+     * clients (posters, range reads — net/AuthInterceptor): the live Device proof when
+     * enrolled (the library reuses it for its window and re-mints when it lapses),
+     * else the session token, else nothing. No wire format is derived here.
+     */
+    fun liveAuthorizationHeader(): String? = deviceCredential?.headerValue() ?: credential?.headerValue()
 
     private fun resolveConfig(): HeyarrConfig =
         HeyarrConfig.resolve(settings.baseUrlOverride, settings.qualityProfileOverride)
@@ -204,7 +186,7 @@ class AppViewModel(
         credential = null
         deviceCredential = null
         _sessionAuthority.value = null
-        _nowPlaying.value = null
+        playback.stop()
         _libraryState.value = LibraryUiState.Loading
         _loginState.value = LoginUiState.Idle
     }
@@ -591,96 +573,6 @@ class AppViewModel(
 
     /** A human-readable name for the node's device registry. */
     var deviceName: String = "heyarr-mobile"
-
-    /**
-     * Open the player for a tapped [work]. A row that carries a content hash streams
-     * directly over the authenticated, range-capable blob endpoint (the M10 path); one
-     * without a hash needs the enrolment-gated plan negotiation, so we surface a notice
-     * rather than opening an empty player.
-     */
-    fun play(work: Work) {
-        val cred = credential ?: return
-        val hash = work.blobHash
-        if (hash.isNullOrBlank()) {
-            _playbackNotice.value =
-                "“${work.title}” has no directly-streamable asset yet — playback " +
-                    "negotiation is enrolment-gated (device auth)."
-            return
-        }
-        val isVideo = PlaybackTarget.looksLikeVideo(work.mime, work.kind)
-        val target = PlaybackClient(transport, config.baseUrl, cred).blobTarget(hash, isVideo, work.mime)
-        _nowPlaying.value = NowPlaying(target = target, title = work.title)
-    }
-
-    /**
-     * Play one of a work's files from the detail screen: the asset's own blob hash and
-     * MIME drive the stream target (the M10 direct path over `/blobs/{hash}/content`).
-     */
-    fun playAsset(work: Work, asset: WorkAsset) {
-        val cred = credential ?: return
-        val hash = asset.blobHash
-        if (hash.isNullOrBlank()) {
-            _playbackNotice.value = "“${asset.filename ?: work.title}” has no blob to stream (a linked asset has none)."
-            return
-        }
-        val mime = asset.mime ?: work.mime
-        val isVideo = PlaybackTarget.looksLikeVideo(mime, work.kind)
-        val title = asset.filename?.let { "${work.title} — $it" } ?: work.title
-        val client = PlaybackClient(transport, config.baseUrl, cred)
-        val caps = capabilities
-        if (caps == null) {
-            _nowPlaying.value = NowPlaying(target = client.blobTarget(hash, isVideo, mime), title = title, assetId = asset.id, blobHash = hash)
-            return
-        }
-        // Plan first (heyarr-core #432): the node may repackage for this phone. A node
-        // that predates the contract answers 400 and `resolve` falls back to the blob.
-        viewModelScope.launch {
-            val target = withContext(Dispatchers.IO) {
-                runCatching { client.resolve(asset.id, hash, isVideo, mime, caps) }
-                    .getOrElse { client.blobTarget(hash, isVideo, mime).copy(reason = it.message) }
-            }
-            _nowPlaying.value = NowPlaying(target = target, title = title, assetId = asset.id, blobHash = hash)
-        }
-    }
-
-    /**
-     * The player found a renderer type Media3 can't decode (e.g. AC-3 5.1). If the node
-     * spoke the plan contract and judged the blob direct, ask ONCE more with that codec
-     * struck off — a `stream` answer swaps the target; anything else leaves an honest
-     * banner. A node that never spoke the contract has nothing to offer: the player's
-     * own "not available yet" banner already says so.
-     */
-    fun onPlaybackIssue(issue: PlaybackDiagnostics.Issue) {
-        val playing = _nowPlaying.value ?: return
-        val cred = credential ?: return
-        val caps = capabilities ?: return
-        if (playing.target.origin != PlaybackTarget.Origin.DIRECT_PLANNED || playing.replanned) return
-        val assetId = playing.assetId ?: return
-        val hash = playing.blobHash ?: return
-        val codec = issue.codec ?: return
-        val client = PlaybackClient(transport, config.baseUrl, cred)
-        viewModelScope.launch {
-            val replanned = withContext(Dispatchers.IO) {
-                runCatching { client.resolve(assetId, hash, playing.target.isVideo, playing.target.mimeType, caps.without(codec)) }.getOrNull()
-            }
-            if (_nowPlaying.value !== playing) return@launch // the user moved on
-            if (replanned != null && replanned.origin == PlaybackTarget.Origin.STREAM) {
-                _nowPlaying.value = playing.copy(target = replanned, replanned = true)
-            } else {
-                _nowPlaying.value = playing.copy(banner = PlaybackDiagnostics.afterReplanFailed(issue), replanned = true)
-            }
-        }
-    }
-
-    /** Close the player and release its target. */
-    fun stopPlayback() {
-        _nowPlaying.value = null
-    }
-
-    /** Clear the transient "cannot stream directly" notice once shown. */
-    fun clearPlaybackNotice() {
-        _playbackNotice.value = null
-    }
 
     /** Pull-to-refresh: reload the library, keeping the current list on screen meanwhile. */
     fun refreshLibrary() = loadLibrary(keepShowing = true)

@@ -147,6 +147,15 @@ object JsonScan {
 
     fun intField(json: String, key: String): Int? = longField(json, key)?.toInt()
 
+    /** A top-level bare number field read as a double (`6960.5`, `12`, `-1e3`), or null when absent/null/quoted. */
+    fun doubleField(json: String, key: String): Double? {
+        val i = valueStart(json, key) ?: return null
+        if (json.startsWith("null", i) || json[i] == '"') return null
+        var j = i
+        while (j < json.length && (json[j].isDigit() || json[j] in "+-.eE")) j++
+        return json.substring(i, j).toDoubleOrNull()
+    }
+
     /** A top-level boolean field. */
     fun boolField(json: String, key: String): Boolean? {
         val i = valueStart(json, key) ?: return null

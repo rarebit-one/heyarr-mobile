@@ -38,12 +38,22 @@ fun LibraryScreen(
     onRefresh: () -> Unit,
     onOpen: (Work) -> Unit,
     modifier: Modifier = Modifier,
+    /** A link to the followed-sources list, when this list is the management surface. */
+    onFollowing: (() -> Unit)? = null,
 ) {
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             item {
                 Text("Library", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 16.dp))
                 Text("Recent first · pull to refresh", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 12.dp))
+                if (onFollowing != null) {
+                    Text(
+                        "★ Followed sources ›",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.fillMaxWidth().clickable(onClick = onFollowing).padding(vertical = 8.dp),
+                    )
+                    HorizontalDivider()
+                }
             }
             when (state) {
                 is LibraryUiState.Loading -> item { Text("Loading…") }

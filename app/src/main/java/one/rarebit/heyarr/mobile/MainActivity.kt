@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -12,13 +11,10 @@ import one.rarebit.heyarr.mobile.device.EnrolUiState
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -26,7 +22,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -38,31 +33,18 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.util.UnstableApi
+import one.rarebit.heyarr.mobile.nav.HeyarrNavHost
 import one.rarebit.heyarr.mobile.device.AndroidBiometricGate
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
 import one.rarebit.heyarr.mobile.device.EnrolScreen
 import one.rarebit.heyarr.mobile.device.HandoffLauncher
 import one.rarebit.heyarr.mobile.device.PairDeepLink
-import one.rarebit.heyarr.mobile.library.LibraryHost
 import one.rarebit.heyarr.mobile.login.LoginScreen
 import one.rarebit.heyarr.mobile.login.LoginUiState
 import one.rarebit.heyarr.mobile.login.VoidbindHandoff
 import one.rarebit.heyarr.mobile.playback.MediaCodecCapabilities
-import one.rarebit.heyarr.mobile.playback.PlayerScreen
-import one.rarebit.heyarr.mobile.search.FollowingHost
-import one.rarebit.heyarr.mobile.search.SearchScreen
-import one.rarebit.heyarr.mobile.search.SearchViewModel
 import one.rarebit.heyarr.mobile.search.SessionAuthority
-import one.rarebit.heyarr.mobile.settings.PrefsSettingsStore
 import one.rarebit.heyarr.mobile.settings.SettingsScreen
-
-/** The post-login tabs. */
-private enum class Tab(val label: String, val glyph: String) {
-    Library("Library", "▤"),
-    Search("Search", "⌕"),
-    Following("Following", "★"),
-    Device("Device", "⚿"),
-}
 
 /**
  * A pairing invite that arrived by deep link (`heyarr-mobile://pair?invite=…`) — from
@@ -79,6 +61,7 @@ private data class LinkedInvite(val inviteQr: String?, val problem: String?, val
  * this instance via [onNewIntent] instead of stacking; a cold start routes the launching
  * intent in [onCreate].
  */
+@UnstableApi
 class MainActivity : FragmentActivity() {
 
     private var linkedInvite by mutableStateOf<LinkedInvite?>(null)
@@ -135,15 +118,24 @@ class MainActivity : FragmentActivity() {
             MaterialTheme {
                 val vm: AppViewModel = viewModel(
                     factory = viewModelFactory {
-                        initializer { AppViewModel(settings = PrefsSettingsStore(appContext), pairing = app.pairing) }
+                        initializer {
+                            AppViewModel(
+                                settings = app.graph.settings,
+                                pairing = app.pairing,
+                                rawTransport = app.graph.rawTransport,
+                            )
+                        }
                     },
                 )
                 LaunchedEffect(vm) {
                     vm.deviceName = app.deviceName
                     app.credentialProvider = { vm.credentialOrNull() }
+                    // Posters and range reads go out through the shared client and pick
+                    // up the live credential here, without ever holding it themselves.
+                    app.graph.authHeader.provider = { vm.liveAuthorizationHeader() }
                     vm.attachDevice(keyring)
                     // What this phone can decode, for the playback planner (#432).
-                    vm.capabilities = MediaCodecCapabilities.probe(appContext)
+                    vm.playback.capabilities = MediaCodecCapabilities.probe(appContext)
                 }
                 // The "Pairing with Cruciform…" foreground-service notification needs this
                 // on Android 13+; the service runs regardless, the notice just stays hidden.
@@ -190,7 +182,7 @@ class MainActivity : FragmentActivity() {
                         )
                     }
                 } else if (loginState is LoginUiState.Approved) {
-                    SignedInScaffold(vm, voidbindInstalled = voidbindInstalled, focusDevice = focusDevice, onSettings = { showSettings = true })
+                    HeyarrNavHost(vm = vm, httpClient = app.graph.okHttp, audio = app.graph.audio, focusDevice = focusDevice, onSettings = { showSettings = true })
                 } else if (showEnrol) {
                     // Enrolment needs no session: pairing runs over the relay, and an enrolled
                     // phone then signs in with its cert instead of a QR login.
@@ -244,7 +236,7 @@ class MainActivity : FragmentActivity() {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HeyarrTopBar(subtitle: String, onSettings: (() -> Unit)?) {
+internal fun HeyarrTopBar(subtitle: String, onSettings: (() -> Unit)?) {
     TopAppBar(
         title = {
             Column {
@@ -291,127 +283,4 @@ internal fun shortPrincipal(principal: String): String {
     val prefix = principal.substring(0, sep + 1)
     val body = principal.substring(sep + 1)
     return if (body.length <= 8) principal else "$prefix${body.take(8)}…"
-}
-
-@UnstableApi
-@Composable
-private fun SignedInScaffold(vm: AppViewModel, voidbindInstalled: Boolean, focusDevice: Int = 0, onSettings: () -> Unit) {
-    val libraryState by vm.libraryState.collectAsStateWithLifecycle()
-    val parkedInvite by vm.parkedInvite.collectAsStateWithLifecycle()
-    val nowPlaying by vm.nowPlaying.collectAsStateWithLifecycle()
-    val playbackNotice by vm.playbackNotice.collectAsStateWithLifecycle()
-    val loginState by vm.loginState.collectAsStateWithLifecycle()
-    val authority by vm.sessionAuthority.collectAsStateWithLifecycle()
-    val config by vm.configState.collectAsStateWithLifecycle()
-    val enrolState by vm.enrolState.collectAsStateWithLifecycle()
-
-    // Surface a "cannot stream directly" notice, then clear it so it fires once.
-    val context = LocalContext.current
-    LaunchedEffect(playbackNotice) {
-        playbackNotice?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-            vm.clearPlaybackNotice()
-        }
-    }
-
-    // The player is a full-screen overlay over the tabs while an item is playing.
-    nowPlaying?.let { playing ->
-        PlayerScreen(
-            target = playing.target,
-            title = playing.title,
-            onBack = vm::stopPlayback,
-            banner = playing.banner,
-            onIssue = vm::onPlaybackIssue,
-            client = vm.httpClient,
-            modifier = Modifier.fillMaxSize(),
-        )
-        return
-    }
-
-    // The search/acquire/following features run with the SAME authenticated identity
-    // as the library browse — built once the credential exists, and rebuilt when the
-    // config it was built against changes (the key).
-    val credential = vm.credentialOrNull()
-    val searchVm: SearchViewModel = viewModel(
-        // Keyed on the credential SHAPE too: enrolling swaps the Bearer session for a
-        // Device cert, and the features must be rebuilt on it.
-        key = "search:${config.baseUrl}:${config.defaultQualityProfile}:${credential?.javaClass?.simpleName}",
-        factory = viewModelFactory {
-            initializer { SearchViewModel(config, credential!!, vm.transport) }
-        },
-    )
-    val searchState by searchVm.searchState.collectAsStateWithLifecycle()
-    val acquireStates by searchVm.acquireStates.collectAsStateWithLifecycle()
-    val libraryRefreshing by vm.libraryRefreshing.collectAsStateWithLifecycle()
-
-    var tab by remember { mutableStateOf(Tab.Library) }
-    // A deep-linked invite (each one bumps focusDevice) opens the Device tab.
-    LaunchedEffect(focusDevice) { if (focusDevice > 0) tab = Tab.Device }
-    // A work's "Open source" jumps to the Following tab with that source's detail open.
-    var openSourceId by remember { mutableStateOf<String?>(null) }
-    val user = (loginState as? LoginUiState.Approved)?.user
-
-    Scaffold(
-        topBar = {
-            HeyarrTopBar(subtitle = sessionSubtitle(user, authority, config.baseUrl), onSettings = onSettings)
-        },
-        bottomBar = {
-            NavigationBar {
-                Tab.entries.forEach { entry ->
-                    NavigationBarItem(
-                        selected = tab == entry,
-                        onClick = { tab = entry },
-                        icon = { Text(entry.glyph) },
-                        label = { Text(entry.label) },
-                    )
-                }
-            }
-        },
-    ) { padding ->
-        val content = Modifier.fillMaxSize().padding(padding)
-        when (tab) {
-            Tab.Library -> LibraryHost(
-                state = libraryState,
-                refreshing = libraryRefreshing,
-                authority = authority,
-                baseUrl = config.baseUrl,
-                credential = credential!!,
-                transport = vm.transport,
-                onRefresh = vm::refreshLibrary,
-                onPlay = vm::playAsset,
-                onOpenSource = { openSourceId = it.id; tab = Tab.Following },
-                onAuthorityRecheck = vm::loadSessionAuthority,
-                modifier = content,
-            )
-            Tab.Search -> SearchScreen(
-                state = searchState,
-                acquireStates = acquireStates,
-                onSearch = searchVm::onSearch,
-                onGetOnce = searchVm::onGetOnce,
-                onFollow = searchVm::onFollow,
-                modifier = content,
-            )
-            Tab.Following -> FollowingHost(
-                vm = searchVm,
-                openSourceId = openSourceId,
-                onClearOpen = { openSourceId = null },
-                modifier = content,
-            )
-            Tab.Device -> EnrolScreen(
-                state = enrolState,
-                onCreateKey = vm::provisionDevice,
-                onJoinInvite = vm::joinPairing,
-                onSasMatches = vm::confirmSas,
-                onSasMismatch = vm::rejectSas,
-                onRetry = vm::retryEnrol,
-                onForget = vm::forgetDevice,
-                onDone = { vm.useDeviceCredential(); tab = Tab.Library },
-                modifier = content,
-                parkedInvite = parkedInvite,
-                onDiscardParked = vm::discardParkedInvite,
-                onCancelPairing = vm::cancelPairing,
-                onRegister = vm::registerDevice,
-            )
-        }
-    }
 }

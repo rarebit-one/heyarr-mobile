@@ -41,12 +41,22 @@ object WorksJson {
     private fun parseObject(obj: String): Work? {
         val id = JsonScan.stringField(obj, "id") ?: return null
         val title = JsonScan.firstString(obj, TITLE_KEYS) ?: id
+        // The browse embeds (heyarr-core ADR-0075), when the row carries them. Each is
+        // read from its OWN slice, so a `blob_hash` inside `primary_asset` is never
+        // mistaken for a top-level one (JsonScan reads depth-1 only).
+        val primary = JsonScan.objectAt(obj, "primary_asset")
+        val artwork = JsonScan.objectAt(obj, "artwork")
+        val attributes = JsonScan.objectAt(obj, "attributes")
         return Work(
             id = id,
             title = title,
             kind = JsonScan.firstString(obj, KIND_KEYS),
-            blobHash = JsonScan.firstString(obj, HASH_KEYS),
-            mime = JsonScan.firstString(obj, MIME_KEYS),
+            blobHash = JsonScan.firstString(obj, HASH_KEYS) ?: primary?.let { JsonScan.stringField(it, "blob_hash") },
+            mime = JsonScan.firstString(obj, MIME_KEYS) ?: primary?.let { JsonScan.stringField(it, "mime") },
+            primaryAssetId = primary?.let { JsonScan.stringField(it, "asset_id") },
+            artworkPath = artwork?.let { JsonScan.stringField(it, "content_url") },
+            artist = attributes?.let { JsonScan.stringField(it, "artist") },
+            author = attributes?.let { JsonScan.stringField(it, "author") },
             year = JsonScan.intField(obj, "year"),
             workKey = JsonScan.stringField(obj, "work_key"),
             sortTitle = JsonScan.stringField(obj, "sort_title"),

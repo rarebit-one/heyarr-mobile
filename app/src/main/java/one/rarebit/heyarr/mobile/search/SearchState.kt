@@ -13,8 +13,8 @@ sealed interface SearchUiState {
     /** A search is in flight for [query]. */
     data class Searching(val query: String) : SearchUiState
 
-    /** [query] returned [results]. */
-    data class Results(val query: String, val results: List<SearchResult>) : SearchUiState
+    /** [query] returned [results] — works — and, on a node that reports them, [episodes]. */
+    data class Results(val query: String, val results: List<SearchResult>, val episodes: List<EpisodeResult> = emptyList()) : SearchUiState
 
     /** [query] returned nothing. */
     data class Empty(val query: String) : SearchUiState
@@ -28,10 +28,10 @@ sealed interface SearchUiState {
          * lands on [Empty] when nothing came back, else [Results]. A blank query is
          * [Idle] (there is nothing to show). Pure — the unit test drives it directly.
          */
-        fun forResults(query: String, results: List<SearchResult>): SearchUiState = when {
+        fun forResults(query: String, results: List<SearchResult>, episodes: List<EpisodeResult> = emptyList()): SearchUiState = when {
             query.isBlank() -> Idle
-            results.isEmpty() -> Empty(query)
-            else -> Results(query, results)
+            results.isEmpty() && episodes.isEmpty() -> Empty(query)
+            else -> Results(query, results, episodes)
         }
     }
 }
@@ -65,4 +65,19 @@ sealed interface AcquireState {
             is AcquireClient.Result.Failed -> Failed(result.message)
         }
     }
+}
+
+/**
+ * The "find more" half of universal search: a live metadata-provider lookup
+ * (`POST /api/v1/discover`, heyarr-core #454), asked on demand — never per keystroke —
+ * because it reaches out over the network where the library search does not.
+ */
+sealed interface DiscoverUiState {
+    data object Idle : DiscoverUiState
+    data class Searching(val query: String) : DiscoverUiState
+    data class Results(val query: String, val results: List<one.rarebit.heyarr.mobile.discover.DiscoverResult>) : DiscoverUiState
+    data class Empty(val query: String) : DiscoverUiState
+    /** The node has no discovery-capable provider (503), or predates the route (404). */
+    data class Unavailable(val why: String) : DiscoverUiState
+    data class Error(val message: String) : DiscoverUiState
 }

@@ -32,6 +32,8 @@ data class SearchResult(
      * client's.
      */
     val tvdbId: String? = null,
+    /** The poster's blob route, relative to the node, from the `artwork` embed (ADR-0075). */
+    val artworkPath: String? = null,
 ) {
     /**
      * A hint — not a hard rule — for whether an ongoing **Follow** is meaningful:
@@ -47,3 +49,35 @@ data class SearchResult(
         val FOLLOWABLE_TYPES = listOf("series", "show", "season", "episode", "podcast", "channel", "feed")
     }
 }
+
+/**
+ * A part of a work that matched by its own title (heyarr-core ADR-0075 `EpisodeHit`):
+ * a scanned episode — an edition with its file — or an item a followed source
+ * projected, which has no file of its own. Playable iff it carries a blob.
+ */
+data class EpisodeResult(
+    val kind: String,
+    val id: String,
+    val workId: String,
+    val workTitle: String,
+    val contentType: String? = null,
+    val title: String,
+    val season: Int? = null,
+    val episode: Int? = null,
+    val assetId: String? = null,
+    val blobHash: String? = null,
+    val mime: String? = null,
+) {
+    val isPlayable: Boolean get() = !blobHash.isNullOrBlank()
+
+    /** `S01E02` when both numbers are known, else whichever is. */
+    val code: String? get() = when {
+        season != null && episode != null -> "S%02dE%02d".format(season, episode)
+        episode != null -> "E$episode"
+        season != null -> "S$season"
+        else -> null
+    }
+}
+
+/** Both halves of a search answer. */
+data class SearchHits(val works: List<SearchResult>, val episodes: List<EpisodeResult>)

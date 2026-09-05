@@ -1,7 +1,10 @@
 package one.rarebit.heyarr.mobile
 
 import android.app.Application
+import androidx.media3.common.util.UnstableApi
 import android.content.Intent
+import coil.ImageLoader
+import coil.ImageLoaderFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,9 +21,7 @@ import one.rarebit.heyarr.mobile.device.PairingCoordinator
 import one.rarebit.heyarr.mobile.device.PairingForegroundService
 import one.rarebit.heyarr.mobile.device.PairingState
 import one.rarebit.heyarr.mobile.device.PrefsPendingPairingStore
-import one.rarebit.heyarr.mobile.net.OkHttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpVoidbindTransport
-import one.rarebit.heyarr.mobile.settings.PrefsSettingsStore
 
 /**
  * The process-wide holders. The one that matters is [pairing]: the join → handshake
@@ -30,9 +31,13 @@ import one.rarebit.heyarr.mobile.settings.PrefsSettingsStore
  * foreground service ([PairingForegroundService]) keeps the process from being
  * killed. The Activity's ViewModel only observes it.
  */
-class HeyarrApp : Application() {
+@UnstableApi
+class HeyarrApp : Application(), ImageLoaderFactory {
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** The process-wide object graph: settings, the shared OkHttp client, the auth header source. */
+    val graph: AppGraph by lazy { AppGraph(this, appScope) }
 
     /**
      * The device keyring of the Activity currently in front (its biometric prompt binds
@@ -50,7 +55,7 @@ class HeyarrApp : Application() {
     var deviceName: String = "heyarr-mobile"
 
     val pairing: PairingCoordinator by lazy {
-        val settings = PrefsSettingsStore(this)
+        val settings = graph.settings
         PairingCoordinator(
             scope = appScope,
             store = PrefsPendingPairingStore(this),
@@ -58,7 +63,7 @@ class HeyarrApp : Application() {
                 DevicePairingSteps(
                     keyring = { deviceKeyring },
                     relayTransport = OkHttpVoidbindTransport(),
-                    nodeTransport = OkHttpTransport(),
+                    nodeTransport = graph.rawTransport,
                     baseUrl = { HeyarrConfig.resolve(settings.baseUrlOverride, settings.qualityProfileOverride).baseUrl },
                     deviceName = { deviceName },
                     credential = { credentialProvider() },
@@ -73,6 +78,20 @@ class HeyarrApp : Application() {
             },
         )
     }
+
+    /**
+     * Coil's loader over the shared OkHttp client: a poster URL on our node picks up the
+     * live credential in net/AuthInterceptor; one on any other host goes out bare.
+     * `respectCacheHeaders(false)` because the artwork redirect's short private max-age
+     * would otherwise defeat the disk cache on every scroll — the blob target is
+     * immutable by hash, and a changed poster is a changed URL.
+     */
+    override fun newImageLoader(): ImageLoader =
+        ImageLoader.Builder(this)
+            .okHttpClient { graph.okHttp }
+            .crossfade(true)
+            .respectCacheHeaders(false)
+            .build()
 
     override fun onCreate() {
         super.onCreate()

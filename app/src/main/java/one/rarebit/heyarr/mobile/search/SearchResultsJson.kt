@@ -1,6 +1,7 @@
 package one.rarebit.heyarr.mobile.search
 
 import one.rarebit.heyarr.mobile.net.JsonEscapes
+import one.rarebit.heyarr.mobile.net.JsonScan
 
 /**
  * Dependency-free parser for heyarr's `POST /api/v1/search` response body
@@ -41,9 +42,34 @@ object SearchResultsJson {
                 // The feed identity a one-tap follow needs (heyarr-core WorkSummary.tvdb_id,
                 // omitempty — absent for a work with no stored external id).
                 tvdbId = firstString(obj, listOf("tvdb_id", "feed_ref")),
+                // The poster (ADR-0075), read from the embed's own slice.
+                artworkPath = JsonScan.objectAt(obj, "artwork")?.let { JsonScan.stringField(it, "content_url") },
             )
         }
     }
+
+    /** Both lists of a `POST /search` answer; `episodes` is empty against an older node. */
+    fun parseHits(body: String): SearchHits = SearchHits(works = parse(body), episodes = parseEpisodes(body))
+
+    /** The `episodes` list (ADR-0075), each read from its own slice; a hit missing an id is skipped. */
+    fun parseEpisodes(body: String): List<EpisodeResult> =
+        JsonScan.objectsOf(body, listOf("episodes")).mapNotNull { obj ->
+            val id = JsonScan.stringField(obj, "id") ?: return@mapNotNull null
+            val asset = JsonScan.objectAt(obj, "primary_asset")
+            EpisodeResult(
+                kind = JsonScan.stringField(obj, "kind") ?: "edition",
+                id = id,
+                workId = JsonScan.stringField(obj, "work_id") ?: "",
+                workTitle = JsonScan.stringField(obj, "work_title") ?: "",
+                contentType = JsonScan.stringField(obj, "content_type"),
+                title = JsonScan.stringField(obj, "title") ?: id,
+                season = JsonScan.intField(obj, "season"),
+                episode = JsonScan.intField(obj, "episode"),
+                assetId = asset?.let { JsonScan.stringField(it, "asset_id") },
+                blobHash = asset?.let { JsonScan.stringField(it, "blob_hash") },
+                mime = asset?.let { JsonScan.stringField(it, "mime") },
+            )
+        }
 
     private fun extractArray(body: String): String? {
         val trimmed = body.trim()

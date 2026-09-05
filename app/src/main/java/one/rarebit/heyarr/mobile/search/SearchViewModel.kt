@@ -12,6 +12,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import one.rarebit.heyarr.mobile.HeyarrConfig
 import one.rarebit.heyarr.mobile.auth.Credential
+import one.rarebit.heyarr.mobile.discover.DiscoverClient
+import one.rarebit.heyarr.mobile.discover.DiscoverResult
 import one.rarebit.heyarr.mobile.net.HttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
 
@@ -51,6 +53,11 @@ class SearchViewModel(
     private val following by lazy { FollowingClient(transport, config.baseUrl, credential) }
     private val session by lazy { SessionClient(transport, config.baseUrl, credential) }
     private val sourceClient by lazy { FollowedSourceClient(transport, config.baseUrl, credential) }
+    private val discoverClient by lazy { DiscoverClient(transport, config.baseUrl, credential) }
+
+    /** The "find more" half (`POST /discover`), asked on demand — see [onDiscover]. */
+    private val _discoverState = MutableStateFlow<DiscoverUiState>(DiscoverUiState.Idle)
+    val discoverState: StateFlow<DiscoverUiState> = _discoverState.asStateFlow()
 
     private val _searchState = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
     val searchState: StateFlow<SearchUiState> = _searchState.asStateFlow()
@@ -96,13 +103,55 @@ class SearchViewModel(
             return
         }
         _searchState.value = SearchUiState.Searching(query)
+        _discoverState.value = DiscoverUiState.Idle
         _acquireStates.value = emptyMap()
         viewModelScope.launch {
             val next = withContext(io) {
-                runCatching { SearchUiState.forResults(query, search.search(query)) }
+                runCatching { search.searchAll(query).let { SearchUiState.forResults(query, it.works, it.episodes) } }
                     .getOrElse { SearchUiState.Error(it.message ?: "search failed") }
             }
             _searchState.value = next
+            // The library came back empty: reach out without being asked. Otherwise the
+            // screen offers "Find more" and the network cost is the user's choice.
+            if (next is SearchUiState.Empty) onDiscover(query)
+        }
+    }
+
+    /** Ask the metadata provider (`POST /discover`) for [query] — the "find more" door. */
+    fun onDiscover(query: String) {
+        if (query.isBlank()) return
+        _discoverState.value = DiscoverUiState.Searching(query)
+        viewModelScope.launch {
+            val next = withContext(io) {
+                runCatching { discoverClient.discover(query) }.fold(
+                    onSuccess = { outcome ->
+                        when (outcome) {
+                            is DiscoverClient.Outcome.Found -> if (outcome.results.isEmpty()) DiscoverUiState.Empty(query) else DiscoverUiState.Results(query, outcome.results)
+                            is DiscoverClient.Outcome.Unavailable -> DiscoverUiState.Unavailable(outcome.why)
+                            is DiscoverClient.Outcome.Failed -> DiscoverUiState.Error(outcome.message)
+                        }
+                    },
+                    onFailure = { DiscoverUiState.Error(it.message ?: "discovery failed") },
+                )
+            }
+            if ((_discoverState.value as? DiscoverUiState.Searching)?.query == query) _discoverState.value = next
+        }
+    }
+
+    /** Follow a discovery result by the id the provider resolved; tracked under [DiscoverResult.key]. */
+    fun onFollowDiscovered(result: DiscoverResult) {
+        val tvdbId = result.tvdbId
+        if (tvdbId.isNullOrBlank()) {
+            setAcquire(result.key, AcquireState.Failed("this result carries no id to follow"))
+            return
+        }
+        setAcquire(result.key, AcquireState.InFlight)
+        viewModelScope.launch {
+            val state = withContext(io) {
+                runCatching { AcquireState.of(acquire.followFeed(result.title, tvdbId)) }
+                    .getOrElse { AcquireState.Failed(it.message ?: "follow failed") }
+            }
+            setAcquire(result.key, state)
         }
     }
 
