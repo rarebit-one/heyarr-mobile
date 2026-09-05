@@ -175,6 +175,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-ui:$media3")
     implementation("androidx.media3:media3-datasource-okhttp:$media3")
+    // The audio queue lives in a MediaSessionService (notification controls, survives the
+    // Activity); the app talks to it through a MediaController behind the AudioPlayer seam.
+    implementation("androidx.media3:media3-session:$media3")
 
     // ── Unit tests (pure JVM — no Android runtime) ──────────────────────────────
     testImplementation("junit:junit:4.13.2")

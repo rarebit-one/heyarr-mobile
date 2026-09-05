@@ -34,9 +34,9 @@ data class AudioState(
 
 /**
  * The audio seam: a queue that outlives any one screen, so music keeps playing while
- * the user browses. This slice ships an in-process implementation ([InProcessAudioPlayer]);
- * a MediaSessionService-backed one (notification controls, background survival) swaps
- * in behind the same interface without touching the screens.
+ * the user browses. Implemented by [SessionAudioPlayer] over a MediaController bound to
+ * [PlaybackService] (notification controls, background survival); the screens only
+ * ever see this interface.
  */
 interface AudioPlayer {
     val state: StateFlow<AudioState>

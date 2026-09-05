@@ -211,9 +211,9 @@ app/src/main/java/one/rarebit/heyarr/mobile/
   playback/     PlaybackCoordinator (what is playing and how: plan against real capabilities, blob fallback, ONE
                 re-plan on a codec issue — unit-tested over a scripted transport) · PlaybackClient (blob-stream
                 target + /playback/plan) + Media3 player (HeyarrDataSource auth+Range data source, PlayerScreen,
-                PlaybackTarget/Json) · AudioPlayer seam (AudioItem/AudioState) + InProcessAudioPlayer (one
-                ExoPlayer for the process over the shared OkHttp client — music outlives the screen; the
-                MediaSessionService swap-in is the follow-up) + MiniPlayer + NowPlayingScreen · MediaMime
+                PlaybackTarget/Json) · AudioPlayer seam (AudioItem/AudioState) + SessionAudioPlayer (a MediaController
+                bound to PlaybackService — a MediaSessionService with ONE ExoPlayer over the shared OkHttp client,
+                notification/lock-screen controls, survives the Activity) + MiniPlayer + NowPlayingScreen · MediaMime
   personalstate/ PersonalStateClient (opaque spaces sync) + Unwrapper (decrypt-on-device seam)
   search/       Universal search: SearchScreen (library works with posters + episode hits + "find more online" +
                 followed-sources link) · SearchClient (POST /search → works + episodes) · AcquireClient (Get once /
