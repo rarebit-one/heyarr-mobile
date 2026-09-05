@@ -30,6 +30,9 @@ internal class PlaylistsViewModel(
         val playlists: List<PersonalStateCoordinator.PlaylistView> = emptyList(),
         val error: String? = null,
         val busy: Boolean = false,
+        /** The starred/history role space ids, so an operator can point the Mac gateway at them. */
+        val starredSpaceId: String? = null,
+        val historySpaceId: String? = null,
     )
 
     private val _state = MutableStateFlow(UiState(loading = personalState != null, notEnrolled = personalState == null))
@@ -43,9 +46,9 @@ internal class PlaylistsViewModel(
         val ps = personalState ?: return
         _state.value = _state.value.copy(loading = true, error = null)
         viewModelScope.launch {
-            val result = withContext(io) { runCatching { ps.playlists() } }
+            val result = withContext(io) { runCatching { Triple(ps.playlists(), ps.starredSpaceId(), ps.historySpaceId()) } }
             _state.value = result.fold(
-                { UiState(playlists = it) },
+                { (lists, starred, history) -> UiState(playlists = lists, starredSpaceId = starred, historySpaceId = history) },
                 { UiState(error = it.message ?: "couldn't load playlists") },
             )
         }

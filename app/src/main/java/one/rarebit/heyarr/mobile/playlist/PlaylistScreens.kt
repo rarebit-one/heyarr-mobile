@@ -53,7 +53,7 @@ internal fun PlaylistsScreen(
                 state.loading -> Info("Loading…")
                 state.error != null -> Info(state.error, isError = true)
                 state.playlists.isEmpty() -> Info("No playlists yet. Tap ＋ to make one, or add from any card's ⋯ menu.")
-                else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
+                else -> LazyColumn(modifier = Modifier.weight(1f)) {
                     items(state.playlists, key = { it.spaceId }) { pl ->
                         Column(
                             modifier = Modifier.fillMaxWidth().clickable { onOpen(pl.spaceId, pl.name) }.padding(16.dp),
@@ -65,6 +65,7 @@ internal fun PlaylistsScreen(
                     }
                 }
             }
+            GatewaySyncFooter(state.starredSpaceId, state.historySpaceId)
         }
     }
     if (creating) {
@@ -197,4 +198,27 @@ private fun Info(message: String, isError: Boolean = false) {
         color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(16.dp),
     )
+}
+
+/**
+ * Where the Mac gateway needs help: playlists sync to it automatically once the Mac is
+ * an enrolled member (the space is wrapped for its key), but starred and history are
+ * single spaces the gateway is told by id — so surface those ids here for the operator.
+ * Hidden until a star / play has created the role spaces.
+ */
+@Composable
+private fun GatewaySyncFooter(starredSpaceId: String?, historySpaceId: String?) {
+    if (starredSpaceId == null && historySpaceId == null) return
+    HorizontalDivider()
+    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Text("Serve on the Mac gateway", style = MaterialTheme.typography.labelLarge)
+        Text(
+            "Playlists sync once the Mac is an enrolled member. For starred and history, run `heyarr device gateway` with:",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        val mono = androidx.compose.ui.text.font.FontFamily.Monospace
+        starredSpaceId?.let { Text("--starred-space=$it", style = MaterialTheme.typography.bodySmall, fontFamily = mono) }
+        historySpaceId?.let { Text("--history-space=$it", style = MaterialTheme.typography.bodySmall, fontFamily = mono) }
+    }
 }
