@@ -40,6 +40,8 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
     /** A link to the followed-sources list, when this list is the management surface. */
     onFollowing: (() -> Unit)? = null,
+    /** A link to the wants dashboard. */
+    onWants: (() -> Unit)? = null,
 ) {
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
@@ -51,6 +53,14 @@ fun LibraryScreen(
                         "★ Followed sources ›",
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.fillMaxWidth().clickable(onClick = onFollowing).padding(vertical = 8.dp),
+                    )
+                    HorizontalDivider()
+                }
+                if (onWants != null) {
+                    Text(
+                        "⬇ Wants ›",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.fillMaxWidth().clickable(onClick = onWants).padding(vertical = 8.dp),
                     )
                     HorizontalDivider()
                 }

@@ -32,6 +32,11 @@ import okhttp3.OkHttpClient
 import one.rarebit.heyarr.mobile.AppViewModel
 import one.rarebit.heyarr.mobile.HeyarrTopBar
 import one.rarebit.heyarr.mobile.device.EnrolScreen
+import one.rarebit.heyarr.mobile.acquisition.WantDetailScreen
+import one.rarebit.heyarr.mobile.acquisition.WantDetailViewModel
+import one.rarebit.heyarr.mobile.acquisition.WantsClient
+import one.rarebit.heyarr.mobile.acquisition.WantsScreen
+import one.rarebit.heyarr.mobile.acquisition.WantsViewModel
 import one.rarebit.heyarr.mobile.catalog.Artwork
 import one.rarebit.heyarr.mobile.catalog.CatalogClient
 import one.rarebit.heyarr.mobile.catalog.ContinueClient
@@ -244,6 +249,7 @@ fun HeyarrNavHost(
                     state = libraryState, refreshing = libraryRefreshing, onRefresh = vm::refreshLibrary,
                     onOpen = { navController.navigate(Route.WorkDetail(it.id, it.title, manage = true)) },
                     onFollowing = { navController.navigate(Route.Following) },
+                    onWants = { navController.navigate(Route.Wants) },
                     modifier = content,
                 )
             }
@@ -282,6 +288,39 @@ fun HeyarrNavHost(
                     modifier = content,
                     posterUrl = (detail as? WorkDetailUiState.Loaded)?.work?.let { Artwork.posterUrl(env.baseUrl, it) },
                     manageMode = route.manage,
+                    onOpenWant = { navController.navigate(Route.WantDetail(it.id)) },
+                )
+            }
+            composable<Route.Wants> {
+                val wantsVm: WantsViewModel = viewModel(
+                    key = "wants:${env.key}",
+                    factory = viewModelFactory {
+                        initializer { WantsViewModel(WantsClient(env.transport, env.baseUrl, env.credential), LibraryClient(env.transport, env.baseUrl, env.credential)) }
+                    },
+                )
+                val wants by wantsVm.state.collectAsStateWithLifecycle()
+                WantsScreen(state = wants, onBack = { navController.popBackStack() }, onRefresh = wantsVm::load,
+                    onOpen = { navController.navigate(Route.WantDetail(it.id)) }, modifier = content)
+            }
+            composable<Route.WantDetail> { entry ->
+                val id = entry.toRoute<Route.WantDetail>().id
+                val wantVm: WantDetailViewModel = viewModel(
+                    key = "want:$id:${env.key}",
+                    factory = viewModelFactory {
+                        initializer {
+                            WantDetailViewModel(id, WantsClient(env.transport, env.baseUrl, env.credential),
+                                WorkDetailClient(env.transport, env.baseUrl, env.credential), LibraryClient(env.transport, env.baseUrl, env.credential))
+                        }
+                    },
+                )
+                val want by wantVm.state.collectAsStateWithLifecycle()
+                WantDetailScreen(
+                    state = want, canWrite = authority?.canWrite == true,
+                    onBack = { navController.popBackStack() }, onRefresh = wantVm::load,
+                    onSelect = wantVm::select, onSearchAgain = wantVm::searchAgain, onRetry = wantVm::retry,
+                    onSetMonitor = wantVm::setMonitor, onCancel = wantVm::cancel,
+                    onOpenWork = { navController.navigate(Route.WorkDetail(it)) },
+                    modifier = content,
                 )
             }
             composable<Route.Artists> {

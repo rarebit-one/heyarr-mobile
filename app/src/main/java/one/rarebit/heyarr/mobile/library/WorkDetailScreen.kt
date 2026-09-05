@@ -76,6 +76,8 @@ fun WorkDetailScreen(
     posterUrl: String? = null,
     /** Open the Manage section from the start (reached from the Library tab). */
     manageMode: Boolean = false,
+    /** Open a want's own screen (its releases and verdicts). */
+    onOpenWant: ((Want) -> Unit)? = null,
 ) {
     val canWrite = authority?.canWrite == true
     var showEdit by remember { mutableStateOf(false) }
@@ -143,6 +145,9 @@ fun WorkDetailScreen(
                         item { Text("Nothing wanted for this work — use Search → Get once / Follow.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp)) }
                     }
                     items(state.wants, key = { "want:" + it.id }) { want ->
+                        if (onOpenWant != null) {
+                            TextButton(onClick = { onOpenWant(want) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("Releases ›") }
+                        }
                         WantRow(
                             want = want,
                             notice = state.notices[want.id],

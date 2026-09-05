@@ -36,6 +36,10 @@ sealed interface Route {
     /** The reading entry point for one work (its readable files). */
     @Serializable data class Reader(val workId: String, val title: String? = null) : Route
 
+    // ── Acquisition ──────────────────────────────────────────────────────────────
+    @Serializable data object Wants : Route
+    @Serializable data class WantDetail(val id: String) : Route
+
     // ── Followed sources ─────────────────────────────────────────────────────────
     @Serializable data object Following : Route
     @Serializable data class SourceDetail(val id: String) : Route
