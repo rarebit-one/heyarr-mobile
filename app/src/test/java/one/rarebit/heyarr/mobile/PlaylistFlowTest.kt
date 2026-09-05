@@ -20,6 +20,7 @@ import one.rarebit.heyarr.mobile.playlist.PersonalActionsViewModel
 import one.rarebit.heyarr.mobile.playlist.PlaylistsViewModel
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -96,5 +97,13 @@ class PlaylistFlowTest {
         assertEquals(null, actions.addTarget.value)
 
         assertEquals(listOf("song-x"), coord.playlist(space)!!.itemIds)
+    }
+
+    @Test
+    fun surfacesRoleSpaceIdsForTheGateway() {
+        val coord = coordinator(FakeServer())
+        assertNull(PlaylistsViewModel(coord, io = dispatcher).state.value.starredSpaceId)
+        coord.setStarred("m1", true) // lazily creates the starred role space
+        assertEquals("space-0", PlaylistsViewModel(coord, io = dispatcher).state.value.starredSpaceId)
     }
 }
