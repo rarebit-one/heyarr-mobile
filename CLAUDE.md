@@ -198,6 +198,9 @@ app/src/main/java/one/rarebit/heyarr/mobile/
                 the credential on Readium's own range reads, same rule as AuthInterceptor; ReadingPositionStore keeps
                 the exact Locator locally, the node gets the `page` through the consumption reporter as a `read`
                 session; an audiobook plays through the queue)
+  acquisition/  WantsClient (GET /desired paged, GET /desired/{id}/candidates, POST /desired/{id}/select) +
+                CandidatesJson · WantsScreen (the dashboard, from Library) + WantDetailScreen (status, actions,
+                the releases with the profile's verdicts, "Choose this" / "Choose anyway") + ViewModels
   consumption/  ConsumptionClient (POST /devices once per node, POST /consumption/sessions, .../transitions) ·
                 DeviceIdStore (our stable device_key + each node's device id) · ProgressReporter seam +
                 ConsumptionReporter (silent unless the credential can write; one worker, ordered; throttled ticks;
