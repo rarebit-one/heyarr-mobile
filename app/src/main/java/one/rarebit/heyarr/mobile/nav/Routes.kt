@@ -36,6 +36,13 @@ sealed interface Route {
     /** The reading entry point for one work (its readable files). */
     @Serializable data class Reader(val workId: String, val title: String? = null) : Route
 
+    // ── Playlists (encrypted personal state) ─────────────────────────────────────
+    /** This device's playlists — folded from the encrypted spaces it can decrypt. */
+    @Serializable data object Playlists : Route
+
+    /** One playlist. [spaceId] is the personal-state space; [title] a display hint. */
+    @Serializable data class Playlist(val spaceId: String, val title: String? = null) : Route
+
     // ── Acquisition ──────────────────────────────────────────────────────────────
     @Serializable data object Wants : Route
     @Serializable data class WantDetail(val id: String) : Route

@@ -162,14 +162,22 @@ app's fallbacks (retry without `ops`; 404 = nothing learned) carry it; a device 
 read-scoped until an admin grants its key (`POST /api/v1/session/management-grants
 {device_key}`, ADR-0065); `POST /api/v1/devices` is a playback profile, not identity.
 
-## Personal state is opaque; decrypt happens ONLY on-device
+## Personal state is opaque to the node; decrypt happens ONLY on-device
 
-`personalstate/` fetches `/api/v1/spaces/{id}/{keys,changes,snapshot}` as **opaque
-ciphertext** — the peer never decrypts (Invariant 6). Decryption happens on-device under a
-space key **unwrapped in-enclave** via the `Unwrapper` seam (the exact interface heyarr-core's
-`internal/personalstate/client` takes, ADR-0049). **This repo ships NO crypto**: `Unwrapper`
-defaults to fail-closed (`Unavailable`) so nothing silently "decrypts" to plaintext. The real
-unwrap + a local **Personal MCP** (#372/#387) are device-gated follow-ups.
+`personalstate/` is the **device-side M9 engine** (Phase F). It fetches
+`/api/v1/spaces/{id}/{keys,changes,snapshot}` as **opaque ciphertext** — the peer never
+decrypts (Invariant 6, ADR-0049) — and does the decrypt-and-fold and the mint on THIS device:
+`SpaceSession` finds the wrapped key sealed for this device, unwraps it with the phone's X25519
+key (`SpaceCrypto` over voidbind-client **0.7.0** `VoidbindEncryption` — X25519 wrap + XChaCha20,
+KAT-proven; **no wire format is re-derived here**), decrypts the snapshot + changes, and folds
+them through the four CRDT ports (`Playlist`/`StarSet`/`ReadingPositions`/`PlayLog`). A write is
+minted at the current heads, encrypted, and pushed; the node re-derives the content-addressed id
+(pure-Kotlin `Blake3` + `ChangeId`) and refuses a mismatch, so every CRDT + the id framing are
+pinned **byte-for-byte** to heyarr-core's parity vectors (copied into `app/src/test/resources/`;
+regenerate in heyarr-core with `-update` and re-copy). `PersonalStateCoordinator` is the app-facing
+façade; `SpaceRegistry` is the device-side role map the gateway keeps as `SpaceRoles` (every
+openable non-role space is a playlist). A read-only credential views only. `playlist/` is the UI.
+A local **Personal MCP** (#372/#387) is still a device-gated follow-up.
 
 ## Layout
 
@@ -224,7 +232,12 @@ app/src/main/java/one/rarebit/heyarr/mobile/
                 PlaybackTarget/Json) · AudioPlayer seam (AudioItem/AudioState) + SessionAudioPlayer (a MediaController
                 bound to PlaybackService — a MediaSessionService with ONE ExoPlayer over the shared OkHttp client,
                 notification/lock-screen controls, survives the Activity) + MiniPlayer + NowPlayingScreen · MediaMime
-  personalstate/ PersonalStateClient (opaque spaces sync) + Unwrapper (decrypt-on-device seam)
+  personalstate/ the M9 engine: Blake3 + ChangeId (content-addressed id, Go-parity) · the four CRDT
+                ports (Playlist/Starred/ReadingPositions/PlayHistory) · SpaceCrypto (voidbind-client) ·
+                PersonalStateClient (spaces sync) + Wire + SpaceSession (open/fold/mint) + SpaceRegistry +
+                PersonalStateCoordinator (app façade) + KeyringDeviceEncKey
+  playlist/     PersonalActionsViewModel (star/add-to-playlist/history + Home rows) + Playlists/Playlist
+                screens & ViewModels + AddToPlaylistDialog
   search/       Universal search: SearchScreen (library works with posters + episode hits + "find more online" +
                 followed-sources link) · SearchClient (POST /search → works + episodes) · AcquireClient (Get once /
                 Follow; followFeed = follow a DISCOVERED title by tvdb_id) · Following list (FollowingClient) →

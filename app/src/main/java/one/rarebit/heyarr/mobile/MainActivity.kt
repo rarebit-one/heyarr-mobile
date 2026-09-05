@@ -124,6 +124,7 @@ class MainActivity : FragmentActivity() {
                                 pairing = app.pairing,
                                 rawTransport = app.graph.rawTransport,
                                 deviceIds = app.graph.deviceIds,
+                                spaceRegistry = app.graph.spaceRegistry,
                             )
                         }
                     },

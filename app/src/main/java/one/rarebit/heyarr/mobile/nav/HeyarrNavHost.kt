@@ -42,6 +42,12 @@ import one.rarebit.heyarr.mobile.catalog.CatalogClient
 import one.rarebit.heyarr.mobile.catalog.ContinueClient
 import one.rarebit.heyarr.mobile.home.HomeScreen
 import one.rarebit.heyarr.mobile.home.HomeViewModel
+import one.rarebit.heyarr.mobile.playlist.AddToPlaylistDialog
+import one.rarebit.heyarr.mobile.playlist.PersonalActionsViewModel
+import one.rarebit.heyarr.mobile.playlist.PlaylistScreen
+import one.rarebit.heyarr.mobile.playlist.PlaylistViewModel
+import one.rarebit.heyarr.mobile.playlist.PlaylistsScreen
+import one.rarebit.heyarr.mobile.playlist.PlaylistsViewModel
 import one.rarebit.heyarr.mobile.hub.HubScreen
 import one.rarebit.heyarr.mobile.hub.HubViewModel
 import one.rarebit.heyarr.mobile.library.LibraryClient
@@ -188,6 +194,38 @@ fun HeyarrNavHost(
             if (items.isNotEmpty()) audio.playQueue(items, index)
         }
 
+        // Encrypted personal state (playlists, starred, history), decrypted on-device.
+        // One shared instance per node+credential, so a ★ / add-to-playlist tap on any
+        // screen and the Home rows read and write the same state.
+        val personalActions: PersonalActionsViewModel = viewModel(
+            key = "personal:${env.key}",
+            factory = viewModelFactory {
+                initializer {
+                    PersonalActionsViewModel(
+                        vm.personalState(env.baseUrl, env.credential),
+                        LibraryClient(env.transport, env.baseUrl, env.credential),
+                    )
+                }
+            },
+        )
+        val starredIds by personalActions.starredIds.collectAsStateWithLifecycle()
+        val starredWorks by personalActions.starredWorks.collectAsStateWithLifecycle()
+        val recentWorks by personalActions.recentWorks.collectAsStateWithLifecycle()
+        val addTarget by personalActions.addTarget.collectAsStateWithLifecycle()
+        val playlistsForAdd by personalActions.playlists.collectAsStateWithLifecycle()
+
+        /** Play a playlist (its playable works) as an audio queue. */
+        val playPlaylist: (List<Work>) -> Unit = { works ->
+            val items = works.filter { !it.blobHash.isNullOrBlank() }.map { w ->
+                AudioItem(
+                    assetId = w.primaryAssetId ?: w.id, workId = w.id, title = w.title, artist = w.artist, album = null,
+                    artworkUrl = Artwork.posterUrl(env.baseUrl, w),
+                    contentUrl = PlaybackClient.blobContentUrl(env.baseUrl, w.blobHash!!), mime = w.mime,
+                )
+            }
+            if (items.isNotEmpty()) { vm.playback.stop(); audio.playQueue(items, 0) }
+        }
+
         NavHost(navController = navController, startDestination = Route.Home) {
             composable<Route.Home> {
                 val homeVm: HomeViewModel = viewModel(
@@ -203,11 +241,17 @@ fun HeyarrNavHost(
                 )
                 val home by homeVm.state.collectAsStateWithLifecycle()
                 HomeScreen(
-                    state = home, baseUrl = env.baseUrl, onRefresh = homeVm::refresh,
+                    state = home, baseUrl = env.baseUrl, onRefresh = { homeVm.refresh(); personalActions.refresh() },
                     onOpenHub = { navController.navigate(Route.Hub(it)) },
-                    onOpenWork = openWork, onPlay = playOrOpen, modifier = content,
+                    onOpenWork = openWork,
+                    onPlay = { w -> personalActions.recordPlay(w.id); playOrOpen(w) },
+                    modifier = content,
                     onContinue = { e -> e.blobHash?.let { vm.playback.playFile(e.workTitle, e.assetId, it, e.mime, e.contentType, startSeconds = e.positionSeconds) } },
                     onOpenContinue = { navController.navigate(Route.WorkDetail(it.workId, it.workTitle)) },
+                    starredWorks = starredWorks, recentWorks = recentWorks, starredIds = starredIds,
+                    onOpenPlaylists = if (personalActions.enabled) ({ navController.navigate(Route.Playlists) }) else null,
+                    onToggleStar = if (personalActions.enabled) ({ w: Work -> personalActions.toggleStar(w.id) }) else null,
+                    onAddToPlaylist = if (personalActions.enabled) ({ w: Work -> personalActions.openAddToPlaylist(w.id) }) else null,
                 )
             }
             composable<Route.Hub> { entry ->
@@ -285,6 +329,44 @@ fun HeyarrNavHost(
                     manageMode = route.manage,
                     onOpenWant = { navController.navigate(Route.WantDetail(it.id)) },
                 )
+            }
+            composable<Route.Playlists> {
+                val plVm: PlaylistsViewModel = viewModel(
+                    key = "playlists:${env.key}",
+                    factory = viewModelFactory { initializer { PlaylistsViewModel(vm.personalState(env.baseUrl, env.credential)) } },
+                )
+                val plState by plVm.state.collectAsStateWithLifecycle()
+                PlaylistsScreen(
+                    state = plState,
+                    onOpen = { sid, name -> navController.navigate(Route.Playlist(sid, name)) },
+                    onCreate = { name -> plVm.create(name) { sid -> navController.navigate(Route.Playlist(sid, name)) } },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable<Route.Playlist> { entry ->
+                val r = entry.toRoute<Route.Playlist>()
+                val ps = vm.personalState(env.baseUrl, env.credential)
+                if (ps == null) {
+                    LaunchedEffect(Unit) { navController.popBackStack() }
+                } else {
+                    val plVm: PlaylistViewModel = viewModel(
+                        key = "playlist:${r.spaceId}:${env.key}",
+                        factory = viewModelFactory {
+                            initializer {
+                                PlaylistViewModel(r.spaceId, r.title, ps, LibraryClient(env.transport, env.baseUrl, env.credential))
+                            }
+                        },
+                    )
+                    val st by plVm.state.collectAsStateWithLifecycle()
+                    PlaylistScreen(
+                        state = st, onBack = { navController.popBackStack() },
+                        onPlayItem = { w -> personalActions.recordPlay(w.id); playOrOpen(w) },
+                        onPlayAll = playPlaylist,
+                        onOpenWork = openWork,
+                        onRemove = plVm::remove,
+                        onRename = plVm::rename,
+                    )
+                }
             }
             composable<Route.Wants> {
                 val wantsVm: WantsViewModel = viewModel(
@@ -461,6 +543,18 @@ fun HeyarrNavHost(
                     )
                 }
             }
+        }
+
+        // The add-to-playlist picker overlays whatever screen fired it (a card ⋯ menu,
+        // a work header). Its target lives in the shared actions VM, so it survives a
+        // navigation and reads the same playlist list Home does.
+        addTarget?.let {
+            AddToPlaylistDialog(
+                playlists = playlistsForAdd,
+                onPick = { sid -> personalActions.addTargetTo(sid) },
+                onCreateNew = { name -> personalActions.createPlaylistWithTarget(name) },
+                onDismiss = { personalActions.dismissAddToPlaylist() },
+            )
         }
     }
 }

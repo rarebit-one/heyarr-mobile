@@ -34,6 +34,10 @@ class AppGraph(app: Application, scope: CoroutineScope) {
     /** This phone's node-issued device ids, for consumption sessions. */
     val deviceIds: DeviceIdStore = PrefsDeviceIdStore(app)
 
+    /** The device-side personal-state role map (which space holds starred/history/reading). */
+    internal val spaceRegistry: one.rarebit.heyarr.mobile.personalstate.SpaceRegistry =
+        one.rarebit.heyarr.mobile.personalstate.PrefsSpaceRegistry(app)
+
     /** Swapped by the ViewModel as the credential changes; read per request. */
     val authHeader = AuthHeaderSource()
 
