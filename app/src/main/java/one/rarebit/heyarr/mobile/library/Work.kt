@@ -22,6 +22,17 @@ data class Work(
     val blobHash: String? = null,
     /** The primary asset's MIME, when known — drives video-vs-audio and the container hint. */
     val mime: String? = null,
+    /** The primary asset's id, when the row carries one — what `POST /playback/plan` is asked about. */
+    val primaryAssetId: String? = null,
+    /**
+     * The poster's byte route, RELATIVE to the node (`/api/v1/blobs/{hash}/content`), from
+     * the `artwork` embed (heyarr-core ADR-0075). Null when the row carried no embed or the
+     * work has no poster; `catalog/Artwork` decides what to fetch either way.
+     */
+    val artworkPath: String? = null,
+    /** `attributes.artist` (music) / `attributes.author` (books), when the identifier wrote one. */
+    val artist: String? = null,
+    val author: String? = null,
     val year: Int? = null,
     /** heyarr's normalised identity (`work_key`), so a rescan converges on the same work. */
     val workKey: String? = null,

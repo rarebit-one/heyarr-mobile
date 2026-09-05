@@ -89,3 +89,13 @@ class JsonScanTest {
         assertEquals("a/b", ids["note"])
     }
 }
+
+class JsonScanDoubleTest {
+    @Test fun readsDoubles() {
+        assertEquals(6960.5, one.rarebit.heyarr.mobile.net.JsonScan.doubleField("""{"d":6960.5,"n":null,"q":"1.5","i":12}""", "d")!!, 0.0)
+        assertEquals(12.0, one.rarebit.heyarr.mobile.net.JsonScan.doubleField("""{"d":6960.5,"i":12}""", "i")!!, 0.0)
+        assertEquals(null, one.rarebit.heyarr.mobile.net.JsonScan.doubleField("""{"n":null}""", "n"))
+        assertEquals(null, one.rarebit.heyarr.mobile.net.JsonScan.doubleField("""{"q":"1.5"}""", "q"))
+        assertEquals(null, one.rarebit.heyarr.mobile.net.JsonScan.doubleField("""{}""", "x"))
+    }
+}

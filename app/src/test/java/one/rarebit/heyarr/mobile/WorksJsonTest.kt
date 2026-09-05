@@ -82,3 +82,34 @@ class WorksJsonTest {
         assertEquals(emptyMap<String, String>(), WorksJson.parse("""[{"id":"w2","title":"No ids"}]""")[0].externalIds)
     }
 }
+
+class WorksJsonEmbedsTest {
+    @Test fun readsTheBrowseEmbedsFromTheirOwnSlices() {
+        val body = """[{"id":"w1","title":"T","content_type":"music",
+            "attributes":{"artist":"Artist A","author":"nope"},
+            "artwork":{"asset_id":"a5","blob_hash":"blake3:33","content_url":"/api/v1/blobs/blake3:33/content"},
+            "primary_asset":{"asset_id":"a1","blob_hash":"blake3:11","mime":"audio/flac"}}]"""
+        val w = one.rarebit.heyarr.mobile.library.WorksJson.parse(body).single()
+        assertEquals("a1", w.primaryAssetId)
+        assertEquals("blake3:11", w.blobHash)
+        assertEquals("audio/flac", w.mime)
+        assertEquals("/api/v1/blobs/blake3:33/content", w.artworkPath)
+        assertEquals("Artist A", w.artist)
+        assertEquals("nope", w.author)
+    }
+
+    @Test fun aTopLevelHashStillWinsOverTheEmbed() {
+        val body = """[{"id":"w1","title":"T","blob_hash":"blake3:top","primary_asset":{"asset_id":"a1","blob_hash":"blake3:11"}}]"""
+        val w = one.rarebit.heyarr.mobile.library.WorksJson.parse(body).single()
+        assertEquals("blake3:top", w.blobHash)
+        assertEquals("a1", w.primaryAssetId)
+    }
+
+    @Test fun nullEmbedsReadAsAbsent() {
+        val body = """[{"id":"w1","title":"T","artwork":null,"primary_asset":null,"attributes":{}}]"""
+        val w = one.rarebit.heyarr.mobile.library.WorksJson.parse(body).single()
+        assertEquals(null, w.primaryAssetId)
+        assertEquals(null, w.artworkPath)
+        assertEquals(null, w.artist)
+    }
+}

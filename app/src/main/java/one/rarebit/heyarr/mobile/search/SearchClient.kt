@@ -41,6 +41,19 @@ class SearchClient(
         return SearchResultsJson.parse(resp.body)
     }
 
+    /** [search], but keeping the episode hits too (ADR-0075). */
+    fun searchAll(query: String, contentType: String? = null, limit: Int? = null): SearchHits {
+        if (query.isBlank() && contentType.isNullOrBlank()) return SearchHits(emptyList(), emptyList())
+        val resp = http.post(
+            url = searchUrl(baseUrl),
+            body = searchBody(query, contentType, limit),
+            contentType = "application/json",
+            headers = credential.asHeader() + ("Content-Type" to "application/json"),
+        )
+        require(resp.status == 200) { "search: POST /search failed: HTTP ${resp.status}" }
+        return SearchResultsJson.parseHits(resp.body)
+    }
+
     companion object {
         /** `POST /api/v1/search` — the live source-agnostic content-search route. */
         fun searchUrl(baseUrl: String): String = baseUrl.trimEnd('/') + "/api/v1/search"

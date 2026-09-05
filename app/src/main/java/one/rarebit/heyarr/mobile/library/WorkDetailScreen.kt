@@ -20,6 +20,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import one.rarebit.heyarr.mobile.ui.Poster
+import one.rarebit.heyarr.mobile.nav.Route
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,10 +72,15 @@ fun WorkDetailScreen(
     onOpenSource: (FollowedSource) -> Unit,
     onAuthorityRecheck: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The poster to draw in the header, when the caller can name one. */
+    posterUrl: String? = null,
+    /** Open the Manage section from the start (reached from the Library tab). */
+    manageMode: Boolean = false,
 ) {
     val canWrite = authority?.canWrite == true
     var showEdit by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var manageOpen by remember { mutableStateOf(manageMode) }
 
     val loaded = state as? WorkDetailUiState.Loaded
     // Once the delete took, leave the screen — the work is gone from the library.
@@ -80,7 +89,7 @@ fun WorkDetailScreen(
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             item {
-                TextButton(onClick = onBack, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("‹ Library") }
+                TextButton(onClick = onBack, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text("‹ Back") }
             }
             when (state) {
                 is WorkDetailUiState.Loading -> item { Text("Loading…", modifier = Modifier.padding(top = 12.dp)) }
@@ -88,7 +97,16 @@ fun WorkDetailScreen(
                     Text(state.message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp))
                 }
                 is WorkDetailUiState.Loaded -> {
-                    item { Header(state.work) }
+                    item {
+                        Header(state.work, posterUrl)
+                        // The one-tap play: the first file that holds bytes. The Files
+                        // section below still offers every file.
+                        state.assets.firstOrNull { !it.blobHash.isNullOrBlank() }?.let { first ->
+                            Button(onClick = { onPlay(state.work, first) }, modifier = Modifier.padding(bottom = 12.dp)) {
+                                Text(if (Route.hubFor(state.work.kind) == Route.HUB_BOOKS) "▶ Open" else "▶ Play")
+                            }
+                        }
+                    }
                     if (authority?.isReadOnly == true) {
                         item {
                             ReadOnlyAuthorityBanner(
@@ -155,8 +173,16 @@ fun WorkDetailScreen(
                         }
                     }
 
-                    item { SectionTitle("Manage", null) }
                     item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { manageOpen = !manageOpen },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            SectionTitle("Manage", null)
+                            Text(if (manageOpen) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                    if (manageOpen) item {
                         val busy = WorkDetailUiState.NOTICE_WORK in state.busy
                         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -199,11 +225,16 @@ fun WorkDetailScreen(
 }
 
 @Composable
-private fun Header(work: Work) {
+private fun Header(work: Work, posterUrl: String?) {
     Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-        Text(work.title, style = MaterialTheme.typography.headlineSmall)
-        val meta = listOfNotNull(work.year?.toString(), work.kind).joinToString(" · ")
-        if (meta.isNotEmpty()) Text(meta, style = MaterialTheme.typography.bodyMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            Poster(url = posterUrl, kind = work.kind, contentDescription = null, modifier = Modifier.width(110.dp))
+            Column {
+                Text(work.title, style = MaterialTheme.typography.headlineSmall)
+                val meta = listOfNotNull(work.year?.toString(), work.kind, work.artist ?: work.author).joinToString(" · ")
+                if (meta.isNotEmpty()) Text(meta, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
         Text("id ${work.id}", style = MaterialTheme.typography.labelSmall)
         work.workKey?.let { Text("key $it", style = MaterialTheme.typography.labelSmall) }
         Timestamps.short(work.updatedAt ?: work.createdAt)?.let {

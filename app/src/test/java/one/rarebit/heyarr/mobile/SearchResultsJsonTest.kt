@@ -67,3 +67,30 @@ class SearchResultsJsonTest {
         assertEquals(0, SearchResultsJson.parse("""{"error":"nope"}""").size)
     }
 }
+
+class SearchResultsJsonEpisodesTest {
+    @Test fun parsesWorksWithPostersAndEpisodes() {
+        val body = """{"works":[{"work_id":"w1","content_type":"movie","title":"Arrival","year":2016,"attributes":{"director":"V"},
+                         "artwork":{"asset_id":"a5","blob_hash":"blake3:33","content_url":"/api/v1/blobs/blake3:33/content"}}],
+                      "episodes":[
+                        {"kind":"edition","id":"e8","work_id":"w8","work_title":"A Series","content_type":"series","title":"Pilot Light","season":1,"episode":1,
+                         "primary_asset":{"asset_id":"a9","edition_id":"e8","blob_hash":"blake3:88","mime":"video/mp4"}},
+                        {"kind":"item","id":"i8","work_id":"w8","work_title":"A Series","content_type":"series","title":"Pilot Returns","season":1,"episode":2}]}"""
+        val hits = one.rarebit.heyarr.mobile.search.SearchResultsJson.parseHits(body)
+        assertEquals(1, hits.works.size)
+        assertEquals("/api/v1/blobs/blake3:33/content", hits.works[0].artworkPath)
+        assertEquals(2, hits.episodes.size)
+        val ed = hits.episodes[0]
+        assertEquals("edition", ed.kind); assertEquals("S01E01", ed.code); assertEquals("a9", ed.assetId); assertEquals("blake3:88", ed.blobHash)
+        assertEquals(true, ed.isPlayable)
+        val item = hits.episodes[1]
+        assertEquals("item", item.kind); assertEquals(false, item.isPlayable); assertEquals("S01E02", item.code)
+    }
+
+    @Test fun anOlderNodeHasNoEpisodes() {
+        val hits = one.rarebit.heyarr.mobile.search.SearchResultsJson.parseHits("""{"works":[{"work_id":"w1","title":"X"}]}""")
+        assertEquals(1, hits.works.size)
+        assertEquals(0, hits.episodes.size)
+        assertEquals(null, hits.works[0].artworkPath)
+    }
+}
