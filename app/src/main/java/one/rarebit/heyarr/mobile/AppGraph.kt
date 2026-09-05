@@ -9,7 +9,7 @@ import one.rarebit.heyarr.mobile.net.AuthInterceptor
 import one.rarebit.heyarr.mobile.net.HttpTransport
 import one.rarebit.heyarr.mobile.net.OkHttpTransport
 import one.rarebit.heyarr.mobile.playback.AudioPlayer
-import one.rarebit.heyarr.mobile.playback.InProcessAudioPlayer
+import one.rarebit.heyarr.mobile.playback.SessionAudioPlayer
 import one.rarebit.heyarr.mobile.settings.PrefsSettingsStore
 import one.rarebit.heyarr.mobile.settings.SettingsStore
 import java.util.concurrent.TimeUnit
@@ -44,6 +44,9 @@ class AppGraph(app: Application, scope: CoroutineScope) {
     /** The raw transport over the shared client; the ViewModel wraps it for Device auth. */
     val rawTransport: HttpTransport = OkHttpTransport(okHttp)
 
-    /** The audio queue — one player for the process, so music outlives the screen that started it. */
-    val audio: AudioPlayer by lazy { InProcessAudioPlayer(app, okHttp, scope) }
+    /**
+     * The audio queue, behind the seam: a MediaController bound to PlaybackService, so
+     * music outlives the screen AND the Activity, with notification controls.
+     */
+    val audio: AudioPlayer by lazy { SessionAudioPlayer(app, scope) }
 }
