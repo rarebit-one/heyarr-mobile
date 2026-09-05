@@ -152,7 +152,7 @@ fun HeyarrNavHost(
         bottomBar = {
             if (!fullScreen) {
                 Column {
-                    if (audioState.item != null) {
+                    if (Decisions.showMiniPlayer(fullScreen, audioState.item)) {
                         MiniPlayer(state = audioState, onOpen = { navController.navigate(Route.Player) { launchSingleTop = true } },
                             onTogglePlay = audio::togglePlayPause, onNext = audio::next)
                     }
@@ -176,21 +176,16 @@ fun HeyarrNavHost(
         // A tap on a card means different things per hub: a film plays, an album opens
         // its tracks (the queue is the music experience), a book opens the reader entry.
         val playOrOpen: (Work) -> Unit = { work ->
-            when (Route.hubFor(work.kind)) {
-                Route.HUB_MUSIC -> navController.navigate(Route.Album(work.id, work.title))
-                Route.HUB_BOOKS -> navController.navigate(Route.Reader(work.id, work.title))
-                else -> { vm.playback.stop(); vm.playback.play(work) }
+            when (Decisions.tapFor(work)) {
+                Decisions.Tap.OPEN_ALBUM -> navController.navigate(Route.Album(work.id, work.title))
+                Decisions.Tap.OPEN_READER -> navController.navigate(Route.Reader(work.id, work.title))
+                Decisions.Tap.PLAY -> { vm.playback.stop(); vm.playback.play(work) }
             }
         }
         val listen: (Work, List<WorkAsset>, Int) -> Unit = { work, tracks, start ->
             vm.playback.stop()
-            audio.playQueue(tracks.map { t ->
-                AudioItem(
-                    assetId = t.id, workId = work.id, title = trackTitle(t), artist = work.artist, album = work.title,
-                    artworkUrl = Artwork.posterUrl(env.baseUrl, work),
-                    contentUrl = t.blobHash?.let { PlaybackClient.blobContentUrl(env.baseUrl, it) } ?: "", mime = t.mime,
-                )
-            }, start)
+            val (items, index) = Decisions.queueFor(env.baseUrl, work, tracks, start)
+            if (items.isNotEmpty()) audio.playQueue(items, index)
         }
 
         NavHost(navController = navController, startDestination = Route.Home) {
@@ -438,20 +433,18 @@ fun HeyarrNavHost(
             }
             composable<Route.Player> {
                 val playing = nowPlaying
-                if (playing == null && audioState.item != null) {
-                    NowPlayingScreen(
+                when (Decisions.playerContent(playing, audioState.item)) {
+                    Decisions.PlayerContent.AUDIO -> NowPlayingScreen(
                         state = audioState, onBack = { navController.popBackStack() },
                         onTogglePlay = audio::togglePlayPause, onNext = audio::next, onPrevious = audio::previous,
                         onSeek = audio::seekTo, onSkipTo = audio::skipTo,
                         onStop = { audio.stop(); navController.popBackStack() },
                         modifier = Modifier.fillMaxSize(),
                     )
-                } else if (playing == null) {
                     // Nothing to show: the item was stopped (or never existed). Leave.
-                    LaunchedEffect(Unit) { navController.popBackStack() }
-                } else {
-                    PlayerScreen(
-                        target = playing.target, title = playing.title,
+                    Decisions.PlayerContent.NONE -> LaunchedEffect(Unit) { navController.popBackStack() }
+                    Decisions.PlayerContent.VIDEO -> PlayerScreen(
+                        target = playing!!.target, title = playing.title,
                         onBack = { vm.playback.stop(); navController.popBackStack() },
                         banner = playing.banner, onIssue = vm.playback::onIssue,
                         client = httpClient, modifier = Modifier.fillMaxSize(),
