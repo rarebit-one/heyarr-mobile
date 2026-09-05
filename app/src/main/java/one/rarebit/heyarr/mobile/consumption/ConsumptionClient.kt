@@ -45,10 +45,10 @@ class ConsumptionClient(
         else Outcome.Refused(resp.status, ProblemDetail.message(resp.body, resp.status, "open session"))
     }
 
-    /** `POST /consumption/sessions/{id}/transitions` — start/pause/resume/progress/stop/complete, with a position in seconds. */
-    fun transition(sessionId: String, transition: String, seconds: Double?): Outcome {
+    /** `POST /consumption/sessions/{id}/transitions` — start/pause/resume/progress/stop/complete, with a position. */
+    fun transition(sessionId: String, transition: String, pos: Position?): Outcome {
         val h = headers() ?: return Outcome.Refused(401, "no credential")
-        val resp = http.post(transitionUrl(baseUrl(), sessionId), transitionBody(transition, seconds), "application/json", h)
+        val resp = http.post(transitionUrl(baseUrl(), sessionId), transitionBody(transition, pos), "application/json", h)
         return if (resp.status == 200) Outcome.Ok(sessionId)
         else Outcome.Refused(resp.status, ProblemDetail.message(resp.body, resp.status, transition))
     }
@@ -72,11 +72,13 @@ class ConsumptionClient(
         fun sessionBody(assetId: String, deviceId: String, verb: String): String =
             "{\"asset_id\":" + AcquireClient.jsonString(assetId) + ",\"device_id\":" + AcquireClient.jsonString(deviceId) + ",\"verb\":" + AcquireClient.jsonString(verb) + "}"
 
-        /** A position rides as a `seconds` locator; formatted with up to 3 decimals, never scientific. Pure. */
-        fun transitionBody(transition: String, seconds: Double?): String {
-            val progress = seconds?.let { ",\"progress\":{\"locator\":" + AcquireClient.jsonString(locator(it)) + ",\"unit\":\"seconds\"}" } ?: ""
+        /** A position rides as `progress {locator, unit}`. Pure. */
+        fun transitionBody(transition: String, pos: Position?): String {
+            val progress = pos?.let { ",\"progress\":{\"locator\":" + AcquireClient.jsonString(it.locator) + ",\"unit\":" + AcquireClient.jsonString(it.unit) + "}" } ?: ""
             return "{\"transition\":" + AcquireClient.jsonString(transition) + progress + "}"
         }
+
+        /** Seconds as a locator: up to 3 decimals, never scientific. Pure. */
 
         fun locator(seconds: Double): String {
             val s = seconds.coerceAtLeast(0.0)

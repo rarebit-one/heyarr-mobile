@@ -108,6 +108,14 @@
             android:name=".device.PairingForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- The reader: a Readium navigator in its own activity (fragment-hosted), launched
+             from the reader entry screen with the file's authenticated blob URL. -->
+        <activity
+            android:name=".reader.ReaderActivity"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Heyarr" />
+
         <service
             android:name=".playback.PlaybackService"
             android:exported="true"

@@ -4,6 +4,7 @@ import one.rarebit.heyarr.mobile.auth.Credential
 import one.rarebit.heyarr.mobile.consumption.ConsumptionClient
 import one.rarebit.heyarr.mobile.consumption.ConsumptionReporter
 import one.rarebit.heyarr.mobile.consumption.InMemoryDeviceIdStore
+import one.rarebit.heyarr.mobile.consumption.Position
 import one.rarebit.heyarr.mobile.consumption.ProgressThrottle
 import one.rarebit.heyarr.mobile.net.HttpResponse
 import one.rarebit.heyarr.mobile.playback.ClientCapabilities
@@ -29,8 +30,9 @@ class ConsumptionClientTest {
         )
         assertEquals("""{"device_key":"k","name":"n","platform":"android"}""", ConsumptionClient.registerBody("k", "n", null))
         assertEquals("""{"asset_id":"a1","device_id":"d1","verb":"watch"}""", ConsumptionClient.sessionBody("a1", "d1", "watch"))
-        assertEquals("""{"transition":"progress","progress":{"locator":"1284.5","unit":"seconds"}}""", ConsumptionClient.transitionBody("progress", 1284.5))
+        assertEquals("""{"transition":"progress","progress":{"locator":"1284.5","unit":"seconds"}}""", ConsumptionClient.transitionBody("progress", Position.seconds(1284.5)))
         assertEquals("""{"transition":"start"}""", ConsumptionClient.transitionBody("start", null))
+        assertEquals("""{"transition":"progress","progress":{"locator":"12","unit":"page"}}""", ConsumptionClient.transitionBody("progress", Position.page(12)))
         assertEquals("120", ConsumptionClient.locator(120.0))
         assertEquals("0", ConsumptionClient.locator(-3.0))
         assertEquals("1.25", ConsumptionClient.locator(1.25))
@@ -52,9 +54,9 @@ class ConsumptionClientTest {
 
     @Test fun refusalsCarryTheStatus() {
         val t = RoutedTransport(mapOf("POST /consumption/sessions/s1/transitions" to HttpResponse(409, """{"detail":"illegal session transition"}""")))
-        val out = ConsumptionClient(t, { base }, { cred }).transition("s1", "resume", 1.0)
+        val out = ConsumptionClient(t, { base }, { cred }).transition("s1", "resume", Position.seconds(1.0))
         assertTrue(out is ConsumptionClient.Outcome.Refused && out.status == 409)
-        assertTrue(ConsumptionClient(t, { base }, { null }).transition("s1", "resume", 1.0) is ConsumptionClient.Outcome.Refused)
+        assertTrue(ConsumptionClient(t, { base }, { null }).transition("s1", "resume", Position.seconds(1.0)) is ConsumptionClient.Outcome.Refused)
     }
 
     @Test fun throttleSendsOnIntervalAndMovement() {

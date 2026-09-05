@@ -138,10 +138,10 @@ class PlaybackCoordinatorResumeTest {
     private class Spy : one.rarebit.heyarr.mobile.consumption.ProgressReporter {
         val events = ArrayList<String>()
         override fun begin(assetId: String, verb: String) { events.add("begin:$assetId:$verb") }
-        override fun progress(seconds: Double) { events.add("progress:$seconds") }
-        override fun pause(seconds: Double) { events.add("pause") }
-        override fun resume(seconds: Double) { events.add("resume") }
-        override fun end(seconds: Double, completed: Boolean) { events.add("end:$completed") }
+        override fun progressAt(pos: one.rarebit.heyarr.mobile.consumption.Position) { events.add("progress:${pos.locator}") }
+        override fun pauseAt(pos: one.rarebit.heyarr.mobile.consumption.Position) { events.add("pause") }
+        override fun resumeAt(pos: one.rarebit.heyarr.mobile.consumption.Position) { events.add("resume") }
+        override fun endAt(pos: one.rarebit.heyarr.mobile.consumption.Position, completed: Boolean) { events.add("end:$completed") }
     }
 
     @Test fun aPlayLooksUpTheResumePositionAndOpensASession() {
@@ -154,7 +154,7 @@ class PlaybackCoordinatorResumeTest {
         assertEquals("watch", np.verb)
         assertEquals(listOf("begin:a1:watch"), spy.events)
         c.reportProgress(1300.0); c.reportEnded(1400.0, completed = false)
-        assertEquals(listOf("begin:a1:watch", "progress:1300.0", "end:false"), spy.events)
+        assertEquals(listOf("begin:a1:watch", "progress:1300", "end:false"), spy.events)
     }
 
     @Test fun aKnownStartSkipsTheLookupAndAudioIsAListen() {

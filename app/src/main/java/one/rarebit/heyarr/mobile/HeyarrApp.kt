@@ -50,6 +50,10 @@ class HeyarrApp : Application(), ImageLoaderFactory {
     @Volatile
     var credentialProvider: () -> one.rarebit.heyarr.mobile.auth.Credential? = { null }
 
+    /** The signed-in ViewModel's progress reporter, for the reader activity (a separate task). */
+    @Volatile
+    var reporter: one.rarebit.heyarr.mobile.consumption.ProgressReporter = one.rarebit.heyarr.mobile.consumption.ProgressReporter.NoOp
+
     /** What to call this phone in the node's device registry. */
     @Volatile
     var deviceName: String = "heyarr-mobile"

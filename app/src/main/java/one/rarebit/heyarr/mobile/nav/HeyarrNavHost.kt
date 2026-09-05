@@ -64,6 +64,7 @@ import one.rarebit.heyarr.mobile.playback.NowPlayingScreen
 import one.rarebit.heyarr.mobile.playback.PlaybackClient
 import one.rarebit.heyarr.mobile.playback.PlaybackProgress
 import one.rarebit.heyarr.mobile.playback.PlayerScreen
+import one.rarebit.heyarr.mobile.reader.ReaderActivity
 import one.rarebit.heyarr.mobile.reader.ReaderEntryScreen
 import one.rarebit.heyarr.mobile.search.FollowedSourceDetailScreen
 import one.rarebit.heyarr.mobile.search.FollowingClient
@@ -343,6 +344,12 @@ fun HeyarrNavHost(
                     state = book, baseUrl = env.baseUrl, onBack = { navController.popBackStack() },
                     onListen = { asset -> (book as? WorkDetailUiState.Loaded)?.let { listen(it.work, listOf(asset), 0) } },
                     onOpenWork = { navController.navigate(Route.WorkDetail(route.workId, route.title)) },
+                    onRead = { asset ->
+                        asset.blobHash?.let { hash ->
+                            audio.stop()
+                            context.startActivity(ReaderActivity.intent(context, asset.id, PlaybackClient.blobContentUrl(env.baseUrl, hash), route.title ?: asset.filename ?: ""))
+                        }
+                    },
                     modifier = content,
                 )
             }

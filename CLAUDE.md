@@ -193,8 +193,11 @@ app/src/main/java/one/rarebit/heyarr/mobile/
   music/        MusicClient (GET /artists; 404 → client-side grouping on attributes.artist) + MusicJson ·
                 Artists/Artist/Album screens + ViewModels (an album's tracks = its playable audio assets, filename
                 order; Play → the audio QUEUE, never the video surface)
-  reader/       ReaderFormat (EPUB/PDF/CBZ/CBR/audiobook by MIME then filename) + ReaderEntryScreen (the seam the
-                Readium reader plugs into; an audiobook already plays through the queue)
+  reader/       ReaderFormat (EPUB/PDF/CBZ/CBR/audiobook by MIME then filename) + ReaderEntryScreen → ReaderActivity
+                (Readium 3: EPUB / PDF (pdfium) / comic navigators in a fragment-hosting Activity; ReaderHttp stamps
+                the credential on Readium's own range reads, same rule as AuthInterceptor; ReadingPositionStore keeps
+                the exact Locator locally, the node gets the `page` through the consumption reporter as a `read`
+                session; an audiobook plays through the queue)
   consumption/  ConsumptionClient (POST /devices once per node, POST /consumption/sessions, .../transitions) ·
                 DeviceIdStore (our stable device_key + each node's device id) · ProgressReporter seam +
                 ConsumptionReporter (silent unless the credential can write; one worker, ordered; throttled ticks;

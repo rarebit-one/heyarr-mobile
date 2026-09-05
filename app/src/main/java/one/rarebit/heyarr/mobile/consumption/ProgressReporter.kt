@@ -16,18 +16,35 @@ import one.rarebit.heyarr.mobile.playback.ClientCapabilities
 interface ProgressReporter {
     /** Something started: open a session for [assetId] under [verb] (`watch` | `listen` | `read`). */
     fun begin(assetId: String, verb: String)
-    fun progress(seconds: Double)
-    fun pause(seconds: Double)
-    fun resume(seconds: Double)
+    fun progress(seconds: Double) = progressAt(Position.seconds(seconds))
+    fun pause(seconds: Double) = pauseAt(Position.seconds(seconds))
+    fun resume(seconds: Double) = resumeAt(Position.seconds(seconds))
     /** Playback ended: [completed] when the end was reached, else a stop that keeps the position. */
-    fun end(seconds: Double, completed: Boolean)
+    fun end(seconds: Double, completed: Boolean) = endAt(Position.seconds(seconds), completed)
+
+    /** The unit-aware forms: a page for a reader, seconds for a player. */
+    fun progressAt(pos: Position)
+    fun pauseAt(pos: Position)
+    fun resumeAt(pos: Position)
+    fun endAt(pos: Position, completed: Boolean)
 
     object NoOp : ProgressReporter {
         override fun begin(assetId: String, verb: String) {}
-        override fun progress(seconds: Double) {}
-        override fun pause(seconds: Double) {}
-        override fun resume(seconds: Double) {}
-        override fun end(seconds: Double, completed: Boolean) {}
+        override fun progressAt(pos: Position) {}
+        override fun pauseAt(pos: Position) {}
+        override fun resumeAt(pos: Position) {}
+        override fun endAt(pos: Position, completed: Boolean) {}
+    }
+}
+
+/** Where a session has reached, in the node's vocabulary: a locator and its unit (`seconds` | `page` | `cfi`). */
+data class Position(val locator: String, val unit: String) {
+    /** A number for the throttle to measure movement by. */
+    val magnitude: Double get() = locator.toDoubleOrNull() ?: 0.0
+
+    companion object {
+        fun seconds(s: Double) = Position(ConsumptionClient.locator(s), "seconds")
+        fun page(p: Int) = Position(p.coerceAtLeast(0).toString(), "page")
     }
 }
 
@@ -77,7 +94,7 @@ class ConsumptionReporter(
 
     private sealed interface Cmd {
         data class Begin(val assetId: String, val verb: String) : Cmd
-        data class Move(val transition: String, val seconds: Double) : Cmd
+        data class Move(val transition: String, val pos: Position?) : Cmd
     }
 
     private val queue = Channel<Cmd>(Channel.UNLIMITED)
@@ -98,19 +115,19 @@ class ConsumptionReporter(
         queue.trySend(Cmd.Begin(assetId, verb))
     }
 
-    override fun progress(seconds: Double) {
-        if (sessionId == null || !throttle.accept(clock(), seconds)) return
-        queue.trySend(Cmd.Move("progress", seconds))
+    override fun progressAt(pos: Position) {
+        if (sessionId == null || !throttle.accept(clock(), pos.magnitude)) return
+        queue.trySend(Cmd.Move("progress", pos))
     }
 
-    override fun pause(seconds: Double) = move("pause", seconds)
-    override fun resume(seconds: Double) = move("resume", seconds)
-    override fun end(seconds: Double, completed: Boolean) = move(if (completed) "complete" else "stop", seconds)
+    override fun pauseAt(pos: Position) = move("pause", pos)
+    override fun resumeAt(pos: Position) = move("resume", pos)
+    override fun endAt(pos: Position, completed: Boolean) = move(if (completed) "complete" else "stop", pos)
 
-    private fun move(transition: String, seconds: Double) {
+    private fun move(transition: String, pos: Position) {
         if (sessionId == null) return
-        throttle.mark(clock(), seconds)
-        queue.trySend(Cmd.Move(transition, seconds))
+        throttle.mark(clock(), pos.magnitude)
+        queue.trySend(Cmd.Move(transition, pos))
     }
 
     private fun handle(cmd: Cmd) {
@@ -126,7 +143,7 @@ class ConsumptionReporter(
             }
             is Cmd.Move -> {
                 val id = sessionId ?: return
-                val out = runCatching { client.transition(id, cmd.transition, cmd.seconds) }.getOrNull()
+                val out = runCatching { client.transition(id, cmd.transition, cmd.pos) }.getOrNull()
                 if (out is ConsumptionClient.Outcome.Refused && out.status == 409) sessionId = null
                 if (cmd.transition == "stop" || cmd.transition == "complete") sessionId = null
             }

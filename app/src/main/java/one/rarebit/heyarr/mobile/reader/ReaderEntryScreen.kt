@@ -25,9 +25,9 @@ import one.rarebit.heyarr.mobile.ui.Poster
 
 /**
  * The reading entry point: the book's cover and each readable file with its format.
- * The reader itself (Readium: EPUB/PDF/CBZ with locators the server's `cfi`/`page`
- * progress units map onto) is the next slice; an audiobook already plays through the
- * audio queue. This screen is the seam it plugs into.
+ * Read opens the Readium reader ([ReaderActivity]: EPUB / PDF / comic, resuming from
+ * the locally kept Locator, reporting the page to the node); an audiobook plays
+ * through the audio queue.
  */
 @Composable
 fun ReaderEntryScreen(
@@ -37,6 +37,8 @@ fun ReaderEntryScreen(
     onListen: (WorkAsset) -> Unit,
     onOpenWork: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Open a readable file in the reader (EPUB / PDF / comic). */
+    onRead: (WorkAsset) -> Unit = {},
 ) {
     LazyColumn(modifier = modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)) {
         item { TextButton(onClick = onBack) { Text("‹ Back") } }
@@ -67,7 +69,7 @@ fun ReaderEntryScreen(
                             when (format) {
                                 ReaderFormat.AUDIOBOOK -> Button(onClick = { onListen(asset) }) { Text("▶ Listen") }
                                 null -> OutlinedButton(onClick = {}, enabled = false) { Text("Unsupported") }
-                                else -> OutlinedButton(onClick = {}, enabled = false) { Text("Open in reader · coming soon") }
+                                else -> Button(onClick = { onRead(asset) }) { Text("📖 Read") }
                             }
                         }
                     }

@@ -15,7 +15,7 @@ plugins {
 val releaseVersionName: String =
     providers.gradleProperty("releaseVersionName").orNull
         ?.trim()?.removePrefix("v")?.takeIf { it.isNotEmpty() }
-        ?: "0.2.1"
+        ?: "0.3.1"
 
 fun versionCodeOf(name: String): Int {
     val parts = name.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
@@ -77,6 +77,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -178,6 +179,17 @@ dependencies {
     // The audio queue lives in a MediaSessionService (notification controls, survives the
     // Activity); the app talks to it through a MediaController behind the AudioPlayer seam.
     implementation("androidx.media3:media3-session:$media3")
+
+    // ── The reader (Readium Kotlin toolkit) ─────────────────────────────────────
+    // EPUB, PDF (pdfium) and comic archives, fetched over the authenticated blob route
+    // through a DefaultHttpClient callback (reader/ReaderHttp). Readium needs core
+    // library desugaring (compileOptions below).
+    val readium = "3.1.1"
+    implementation("org.readium.kotlin-toolkit:readium-shared:$readium")
+    implementation("org.readium.kotlin-toolkit:readium-streamer:$readium")
+    implementation("org.readium.kotlin-toolkit:readium-navigator:$readium")
+    implementation("org.readium.kotlin-toolkit:readium-adapter-pdfium:$readium")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 
     // ── Unit tests (pure JVM — no Android runtime) ──────────────────────────────
     testImplementation("junit:junit:4.13.2")
