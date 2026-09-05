@@ -138,6 +138,15 @@ class AppViewModel internal constructor(
         )
     }
 
+    /** The coordinator for the current node + credential (null before enrolment). */
+    private fun currentPersonalState(): one.rarebit.heyarr.mobile.personalstate.PersonalStateCoordinator? =
+        credentialOrNull()?.let { personalState(config.baseUrl, it) }
+
+    /** Syncs a reader's exact locator through the encrypted reading-position space (§45). */
+    val readingPositionSync: one.rarebit.heyarr.mobile.reader.ReadingPositionSync by lazy {
+        one.rarebit.heyarr.mobile.reader.CoordinatorReadingPositionSync({ currentPersonalState() }, viewModelScope)
+    }
+
     /**
      * What is playing and how it came to be: planning, fallback and the one re-plan
      * (playback/PlaybackCoordinator). Reads the credential and node per call, so it

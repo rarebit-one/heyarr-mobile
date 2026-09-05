@@ -14,6 +14,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import one.rarebit.heyarr.mobile.HeyarrApp
 import one.rarebit.heyarr.mobile.R
 import one.rarebit.heyarr.mobile.consumption.Position
@@ -77,7 +78,13 @@ class ReaderActivity : FragmentActivity() {
             publication = pub
             container.removeView(status)
 
-            val initial = positions.locator(assetId)?.let { Locator.fromJSON(org.json.JSONObject(it)) }
+            // Resume from the freshest same-device Locator; if this device has none
+            // (a fresh install, or first read on another device), fall back to the exact
+            // locator the encrypted reading-position space carries (§45), caching it
+            // locally so the next open is instant. The node never sees the plaintext locator.
+            val localJson = positions.locator(assetId)
+            val initialJson = localJson ?: withContext(kotlinx.coroutines.Dispatchers.IO) { app.readingPositionSync.resume(assetId) }?.also { positions.put(assetId, it) }
+            val initial = initialJson?.let { runCatching { Locator.fromJSON(org.json.JSONObject(it)) }.getOrNull() }
             val fragment = ReaderFragment.newInstance()
             fragment.setup(pub, initial) { locator ->
                 positions.put(assetId, locator.toJSON().toString())
@@ -95,6 +102,7 @@ class ReaderActivity : FragmentActivity() {
         val last = intent.getStringExtra(EXTRA_ASSET_ID)?.let { PrefsReadingPositionStore(this).locator(it) }
         val page = last?.let { ReaderPosition.pageOf(it) }
         app?.reporter?.endAt(page?.let { Position.page(it) } ?: Position.page(0), completed = false)
+        intent.getStringExtra(EXTRA_ASSET_ID)?.let { id -> last?.let { app?.readingPositionSync?.save(id, it) } }
         publication?.close()
         super.onDestroy()
     }
