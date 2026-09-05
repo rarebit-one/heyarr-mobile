@@ -62,6 +62,7 @@ import one.rarebit.heyarr.mobile.playback.MediaMime
 import one.rarebit.heyarr.mobile.playback.MiniPlayer
 import one.rarebit.heyarr.mobile.playback.NowPlayingScreen
 import one.rarebit.heyarr.mobile.playback.PlaybackClient
+import one.rarebit.heyarr.mobile.playback.PlaybackProgress
 import one.rarebit.heyarr.mobile.playback.PlayerScreen
 import one.rarebit.heyarr.mobile.reader.ReaderEntryScreen
 import one.rarebit.heyarr.mobile.search.FollowedSourceDetailScreen
@@ -204,7 +205,7 @@ fun HeyarrNavHost(
                     state = home, baseUrl = env.baseUrl, onRefresh = homeVm::refresh,
                     onOpenHub = { navController.navigate(Route.Hub(it)) },
                     onOpenWork = openWork, onPlay = playOrOpen, modifier = content,
-                    onContinue = { e -> e.blobHash?.let { vm.playback.playFile(e.workTitle, e.assetId, it, e.mime, e.contentType) } },
+                    onContinue = { e -> e.blobHash?.let { vm.playback.playFile(e.workTitle, e.assetId, it, e.mime, e.contentType, startSeconds = e.positionSeconds) } },
                     onOpenContinue = { navController.navigate(Route.WorkDetail(it.workId, it.workTitle)) },
                 )
             }
@@ -408,6 +409,16 @@ fun HeyarrNavHost(
                         onBack = { vm.playback.stop(); navController.popBackStack() },
                         banner = playing.banner, onIssue = vm.playback::onIssue,
                         client = httpClient, modifier = Modifier.fillMaxSize(),
+                        startSeconds = playing.startSeconds,
+                        onProgress = { p ->
+                            when (p.event) {
+                                PlaybackProgress.Event.TICK -> vm.playback.reportProgress(p.seconds)
+                                PlaybackProgress.Event.PAUSED -> vm.playback.reportPause(p.seconds)
+                                PlaybackProgress.Event.RESUMED -> vm.playback.reportResume(p.seconds)
+                                PlaybackProgress.Event.ENDED -> vm.playback.reportEnded(p.seconds, completed = true)
+                                PlaybackProgress.Event.LEFT -> vm.playback.reportEnded(p.seconds, completed = false)
+                            }
+                        },
                     )
                 }
             }

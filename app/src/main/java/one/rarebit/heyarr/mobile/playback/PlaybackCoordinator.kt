@@ -25,6 +25,10 @@ data class NowPlaying(
     val blobHash: String? = null,
     val banner: String? = null,
     val replanned: Boolean = false,
+    /** Where to start, in seconds — the continue rail's position, or 0. */
+    val startSeconds: Double = 0.0,
+    /** `watch` | `listen` — what the consumption session records. */
+    val verb: String = "watch",
 )
 
 /**
@@ -43,6 +47,10 @@ class PlaybackCoordinator(
     private val credential: () -> Credential?,
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** Tells the node where playback has reached; NoOp when it cannot write. */
+    private val reporter: one.rarebit.heyarr.mobile.consumption.ProgressReporter = one.rarebit.heyarr.mobile.consumption.ProgressReporter.NoOp,
+    /** The position to resume an asset from, if the node remembers one (the continue rail). Called on IO. */
+    private val resumeAt: (assetId: String) -> Double? = { null },
 ) {
     /**
      * What this phone can decode, for `POST /playback/plan`. Null (tests, or before the
@@ -74,7 +82,7 @@ class PlaybackCoordinator(
         val caps = capabilities
         val assetId = work.primaryAssetId
         if (caps == null || assetId == null) {
-            _nowPlaying.value = NowPlaying(target = client.blobTarget(hash, isVideo, work.mime), title = work.title, assetId = assetId, blobHash = hash)
+            present(NowPlaying(target = client.blobTarget(hash, isVideo, work.mime), title = work.title, assetId = assetId, blobHash = hash, verb = verbFor(isVideo)))
             return
         }
         resolveInto(client, assetId, hash, isVideo, work.mime, work.title, caps)
@@ -94,7 +102,7 @@ class PlaybackCoordinator(
         val client = PlaybackClient(transport, baseUrl(), cred)
         val caps = capabilities
         if (caps == null) {
-            _nowPlaying.value = NowPlaying(target = client.blobTarget(hash, isVideo, mime), title = title, assetId = asset.id, blobHash = hash)
+            present(NowPlaying(target = client.blobTarget(hash, isVideo, mime), title = title, assetId = asset.id, blobHash = hash, verb = verbFor(isVideo)))
             return
         }
         resolveInto(client, asset.id, hash, isVideo, mime, title, caps)
@@ -105,19 +113,39 @@ class PlaybackCoordinator(
      * continue card. Same plan/fallback path as [playAsset]; [kind] steers video-vs-audio
      * when the MIME does not.
      */
-    fun playFile(title: String, assetId: String, blobHash: String, mime: String?, kind: String?) {
+    fun playFile(title: String, assetId: String, blobHash: String, mime: String?, kind: String?, startSeconds: Double? = null) {
         val cred = credential() ?: return
         val isVideo = PlaybackTarget.looksLikeVideo(mime, kind)
         val client = PlaybackClient(transport, baseUrl(), cred)
         val caps = capabilities
         if (caps == null) {
-            _nowPlaying.value = NowPlaying(target = client.blobTarget(blobHash, isVideo, mime), title = title, assetId = assetId, blobHash = blobHash)
+            present(NowPlaying(target = client.blobTarget(blobHash, isVideo, mime), title = title, assetId = assetId, blobHash = blobHash, verb = verbFor(isVideo)), startSeconds)
             return
         }
-        resolveInto(client, assetId, blobHash, isVideo, mime, title, caps)
+        resolveInto(client, assetId, blobHash, isVideo, mime, title, caps, startSeconds)
     }
 
-    private fun resolveInto(client: PlaybackClient, assetId: String, hash: String, isVideo: Boolean, mime: String?, title: String, caps: ClientCapabilities) {
+    /**
+     * Put an item in front: look up where the node last saw this asset (unless the
+     * caller already knows), open a consumption session, then show it.
+     */
+    private fun present(np: NowPlaying, knownStart: Double? = null) {
+        scope.launch {
+            val start = knownStart ?: np.assetId?.let { id -> withContext(io) { runCatching { resumeAt(id) }.getOrNull() } } ?: 0.0
+            np.assetId?.let { reporter.begin(it, np.verb) }
+            _nowPlaying.value = np.copy(startSeconds = start.coerceAtLeast(0.0))
+        }
+    }
+
+    private fun verbFor(isVideo: Boolean) = if (isVideo) "watch" else "listen"
+
+    // ── What the player tells us ──────────────────────────────────────────────────
+    fun reportProgress(seconds: Double) = reporter.progress(seconds)
+    fun reportPause(seconds: Double) = reporter.pause(seconds)
+    fun reportResume(seconds: Double) = reporter.resume(seconds)
+    fun reportEnded(seconds: Double, completed: Boolean) = reporter.end(seconds, completed)
+
+    private fun resolveInto(client: PlaybackClient, assetId: String, hash: String, isVideo: Boolean, mime: String?, title: String, caps: ClientCapabilities, knownStart: Double? = null) {
         // Plan first: the node may repackage for this phone. A node that predates the
         // contract answers 400 and `resolve` falls back to the blob.
         scope.launch {
@@ -125,7 +153,7 @@ class PlaybackCoordinator(
                 runCatching { client.resolve(assetId, hash, isVideo, mime, caps) }
                     .getOrElse { client.blobTarget(hash, isVideo, mime).copy(reason = it.message) }
             }
-            _nowPlaying.value = NowPlaying(target = target, title = title, assetId = assetId, blobHash = hash)
+            present(NowPlaying(target = target, title = title, assetId = assetId, blobHash = hash, verb = verbFor(isVideo)), knownStart)
         }
     }
 
@@ -156,7 +184,7 @@ class PlaybackCoordinator(
         }
     }
 
-    /** Close the player and release its target. */
+    /** Close the player and release its target. The player reports the final position itself. */
     fun stop() {
         _nowPlaying.value = null
     }

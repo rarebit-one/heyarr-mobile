@@ -96,11 +96,21 @@ fun PlayerScreen(
     /** A renderer type Media3 cannot play; the app may re-plan for a stream. */
     onIssue: (PlaybackDiagnostics.Issue) -> Unit = {},
     client: OkHttpClient = remember { OkHttpClient() },
+    /** Where to start, in seconds (the node's remembered position); 0 plays from the top. */
+    startSeconds: Double = 0.0,
+    /** Where playback has reached, for the consumption session. */
+    onProgress: (PlaybackProgress) -> Unit = {},
 ) {
     val context = LocalContext.current
 
     // A restart-seekable stream (#433) carries its own offset; a skip rebuilds the URL.
-    var streamStart by remember(target.streamBaseUrl) { mutableStateOf(target.streamStartSeconds) }
+    // A resume on a stream is a restart at that offset — the only seek a stream has.
+    var streamStart by remember(target.streamBaseUrl) {
+        mutableStateOf(if (target.restartSeekable && startSeconds > 0) startSeconds else target.streamStartSeconds)
+    }
+    // Resume once, on the first READY of the first URL; a re-plan or a skip must not re-seek.
+    var resumed by remember(target.contentUrl) { mutableStateOf(startSeconds <= 0 || target.restartSeekable) }
+
     val effectiveTarget = if (target.restartSeekable && target.streamBaseUrl != null) target.atStreamStart(streamStart) else target
     val mediaUrl = effectiveTarget.contentUrl
 
@@ -127,6 +137,10 @@ fun PlayerScreen(
                 playWhenReady = true
             }
     }
+
+    // Where we are in the SOURCE: a stream's own clock starts at its offset.
+    fun sourceSeconds(): Double =
+        (if (effectiveTarget.origin == PlaybackTarget.Origin.STREAM) streamStart else 0.0) + player.currentPosition.coerceAtLeast(0L) / 1000.0
 
     // Pick a text track (or turn subtitles off): an override + enabling the text renderer.
     fun selectText(t: UiTextTrack?) {
@@ -180,7 +194,19 @@ fun PlayerScreen(
             override fun onRenderedFirstFrame() { renderedFrame = true }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) reachedReady = true
+                if (playbackState == Player.STATE_READY) {
+                    reachedReady = true
+                    if (!resumed) {
+                        resumed = true
+                        player.seekTo((startSeconds * 1000).toLong())
+                    }
+                }
+                if (playbackState == Player.STATE_ENDED) onProgress(PlaybackProgress(sourceSeconds(), true, PlaybackProgress.Event.ENDED))
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (player.playbackState == Player.STATE_ENDED) return
+                onProgress(PlaybackProgress(sourceSeconds(), false, if (isPlaying) PlaybackProgress.Event.RESUMED else PlaybackProgress.Event.PAUSED))
             }
         }
         player.addListener(listener)
@@ -188,6 +214,18 @@ fun PlayerScreen(
             player.removeListener(listener)
             player.release()
         }
+    }
+
+    // Tick the position while playing; the reporter throttles what actually goes out.
+    LaunchedEffect(player) {
+        while (true) {
+            delay(PROGRESS_TICK_MS)
+            if (player.isPlaying) onProgress(PlaybackProgress(sourceSeconds(), false, PlaybackProgress.Event.TICK))
+        }
+    }
+    // Leaving the screen is a stop that keeps the position.
+    DisposableEffect(Unit) {
+        onDispose { onProgress(PlaybackProgress(sourceSeconds(), false, PlaybackProgress.Event.LEFT)) }
     }
 
     // AVI-with-no-video: READY, duration known, picture never comes.
@@ -411,3 +449,10 @@ private fun buildMediaItem(target: PlaybackTarget, title: String): MediaItem {
  * Map a server MIME to a Media3 container hint where a well-known one applies; an
  * unknown/absent MIME returns null and ExoPlayer sniffs the stream instead.
  */
+
+/** One report from the player: the source position and what just happened. */
+data class PlaybackProgress(val seconds: Double, val completed: Boolean, val event: Event) {
+    enum class Event { TICK, PAUSED, RESUMED, ENDED, LEFT }
+}
+
+private const val PROGRESS_TICK_MS = 5_000L

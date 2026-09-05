@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.CoroutineScope
 import okhttp3.OkHttpClient
+import one.rarebit.heyarr.mobile.consumption.DeviceIdStore
+import one.rarebit.heyarr.mobile.consumption.PrefsDeviceIdStore
 import one.rarebit.heyarr.mobile.net.AuthHeaderSource
 import one.rarebit.heyarr.mobile.net.AuthInterceptor
 import one.rarebit.heyarr.mobile.net.HttpTransport
@@ -28,6 +30,9 @@ import java.util.concurrent.TimeUnit
 class AppGraph(app: Application, scope: CoroutineScope) {
 
     val settings: SettingsStore = PrefsSettingsStore(app)
+
+    /** This phone's node-issued device ids, for consumption sessions. */
+    val deviceIds: DeviceIdStore = PrefsDeviceIdStore(app)
 
     /** Swapped by the ViewModel as the credential changes; read per request. */
     val authHeader = AuthHeaderSource()
