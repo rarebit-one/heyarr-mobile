@@ -18,6 +18,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -47,6 +51,12 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
     onContinue: (ContinueEntry) -> Unit = {},
     onOpenContinue: (ContinueEntry) -> Unit = {},
+    starredWorks: List<Work> = emptyList(),
+    recentWorks: List<Work> = emptyList(),
+    starredIds: Set<String> = emptySet(),
+    onOpenPlaylists: (() -> Unit)? = null,
+    onToggleStar: ((Work) -> Unit)? = null,
+    onAddToPlaylist: ((Work) -> Unit)? = null,
 ) {
     PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -61,6 +71,31 @@ fun HomeScreen(
                             }
                         }
                     }
+                }
+                if (onOpenPlaylists != null) {
+                    Text(
+                        "Your playlists →",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.fillMaxWidth().clickable { onOpenPlaylists() }.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+                    )
+                }
+            }
+            if (starredWorks.isNotEmpty()) {
+                item(key = "row:starred") {
+                    Text("Starred", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
+                    PosterRow(
+                        works = starredWorks, baseUrl = baseUrl, onOpen = onOpenWork, onPlay = onPlay,
+                        starredIds = starredIds, onToggleStar = onToggleStar, onAddToPlaylist = onAddToPlaylist,
+                    )
+                }
+            }
+            if (recentWorks.isNotEmpty()) {
+                item(key = "row:recent") {
+                    Text("Recently played", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
+                    PosterRow(
+                        works = recentWorks, baseUrl = baseUrl, onOpen = onOpenWork, onPlay = onPlay,
+                        starredIds = starredIds, onToggleStar = onToggleStar, onAddToPlaylist = onAddToPlaylist,
+                    )
                 }
             }
             val rail = state.continueRow
@@ -91,7 +126,10 @@ fun HomeScreen(
                         is RowState.Loaded -> if (row.items.isEmpty()) {
                             Text("Nothing here yet.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp))
                         } else {
-                            PosterRow(works = row.items, baseUrl = baseUrl, onOpen = onOpenWork, onPlay = onPlay)
+                            PosterRow(
+                                works = row.items, baseUrl = baseUrl, onOpen = onOpenWork, onPlay = onPlay,
+                                starredIds = starredIds, onToggleStar = onToggleStar, onAddToPlaylist = onAddToPlaylist,
+                            )
                         }
                     }
                 }
@@ -102,10 +140,24 @@ fun HomeScreen(
 }
 
 @Composable
-private fun PosterRow(works: List<Work>, baseUrl: String, onOpen: (Work) -> Unit, onPlay: (Work) -> Unit) {
+private fun PosterRow(
+    works: List<Work>,
+    baseUrl: String,
+    onOpen: (Work) -> Unit,
+    onPlay: (Work) -> Unit,
+    starredIds: Set<String> = emptySet(),
+    onToggleStar: ((Work) -> Unit)? = null,
+    onAddToPlaylist: ((Work) -> Unit)? = null,
+) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp)) {
         items(works, key = { it.id }) { work ->
-            PosterCard(work = work, baseUrl = baseUrl, onOpen = { onOpen(work) }, onPlay = { onPlay(work) }, modifier = Modifier.width(120.dp))
+            PosterCard(
+                work = work, baseUrl = baseUrl, onOpen = { onOpen(work) }, onPlay = { onPlay(work) },
+                modifier = Modifier.width(120.dp),
+                starred = work.id in starredIds,
+                onToggleStar = onToggleStar?.let { { it(work) } },
+                onAddToPlaylist = onAddToPlaylist?.let { { it(work) } },
+            )
         }
     }
 }
@@ -116,17 +168,45 @@ private fun PosterRow(works: List<Work>, baseUrl: String, onOpen: (Work) -> Unit
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun PosterCard(work: Work, baseUrl: String, onOpen: () -> Unit, onPlay: () -> Unit, modifier: Modifier = Modifier) {
+fun PosterCard(
+    work: Work,
+    baseUrl: String,
+    onOpen: () -> Unit,
+    onPlay: () -> Unit,
+    modifier: Modifier = Modifier,
+    starred: Boolean = false,
+    onToggleStar: (() -> Unit)? = null,
+    onAddToPlaylist: (() -> Unit)? = null,
+) {
+    val hasActions = onToggleStar != null || onAddToPlaylist != null
+    var menuOpen by remember { mutableStateOf(false) }
     Column(
         modifier = modifier.combinedClickable(
             onClick = if (work.isPlayable) onPlay else onOpen,
-            onLongClick = onOpen,
+            onLongClick = { if (hasActions) menuOpen = true else onOpen() },
         ),
     ) {
         Poster(url = Artwork.posterUrl(baseUrl, work), kind = work.kind, contentDescription = work.title, modifier = Modifier.fillMaxWidth())
-        Text(work.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+            Text(work.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (starred) Text("★", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 4.dp))
+        }
         val sub = listOfNotNull(work.year?.toString(), work.artist ?: work.author).joinToString(" · ")
         if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (hasActions) {
+            androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                androidx.compose.material3.DropdownMenuItem(text = { Text("Open") }, onClick = { menuOpen = false; onOpen() })
+                onToggleStar?.let { star ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(if (starred) "Unstar" else "★ Star") },
+                        onClick = { menuOpen = false; star() },
+                    )
+                }
+                onAddToPlaylist?.let { add ->
+                    androidx.compose.material3.DropdownMenuItem(text = { Text("Add to playlist") }, onClick = { menuOpen = false; add() })
+                }
+            }
+        }
     }
 }
 

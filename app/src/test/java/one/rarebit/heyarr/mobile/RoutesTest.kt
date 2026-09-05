@@ -28,6 +28,8 @@ class RoutesTest {
         assertTrue(Route.isFullScreen(Route.Player))
         assertFalse(Route.isFullScreen(Route.Home))
         assertFalse(Route.isFullScreen(Route.WorkDetail("w1")))
+        assertFalse(Route.isFullScreen(Route.Playlists))
+        assertFalse(Route.isFullScreen(Route.Playlist("space-1")))
         assertFalse(Route.isFullScreen(null))
     }
 
@@ -38,6 +40,8 @@ class RoutesTest {
         assertEquals(hub, Json.decodeFromString<Route.Hub>(Json.encodeToString(Route.Hub.serializer(), hub)))
         val src = Route.SourceDetail("s9")
         assertEquals(src, Json.decodeFromString<Route.SourceDetail>(Json.encodeToString(Route.SourceDetail.serializer(), src)))
+        val pl = Route.Playlist(spaceId = "sp:1/x", title = "Roadtrip")
+        assertEquals(pl, Json.decodeFromString<Route.Playlist>(Json.encodeToString(Route.Playlist.serializer(), pl)))
     }
 
     @Test fun titleHintDefaultsToNull() {

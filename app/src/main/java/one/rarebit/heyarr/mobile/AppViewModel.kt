@@ -68,7 +68,7 @@ private object UnavailablePairingSteps : PairingSteps {
  * and, when the base URL changed, signs out (a session token is only good for the
  * node that minted it).
  */
-class AppViewModel(
+class AppViewModel internal constructor(
     private val settings: SettingsStore = InMemorySettingsStore(),
     private val loginFactory: (baseUrl: String) -> VoidbindLogin = { base ->
         QrLoginClient(http = OkHttpTransport(), rpBase = base)
@@ -91,6 +91,9 @@ class AppViewModel(
     private val rawTransport: HttpTransport = OkHttpTransport(),
     /** Where this phone's node-issued device ids live (SharedPreferences on the phone). */
     private val deviceIds: DeviceIdStore = InMemoryDeviceIdStore(),
+    /** The device-side personal-state role map (SharedPreferences on the phone; in-memory in tests). */
+    private val spaceRegistry: one.rarebit.heyarr.mobile.personalstate.SpaceRegistry =
+        one.rarebit.heyarr.mobile.personalstate.InMemorySpaceRegistry(),
 ) : ViewModel() {
 
     /**
@@ -113,6 +116,27 @@ class AppViewModel(
         membership = { keyring?.let { MembershipOps.headerValue(it.knownOps(), it.certToken()) } },
         onUnauthorized = ::refreshMembership,
     )
+
+    /**
+     * A [one.rarebit.heyarr.mobile.personalstate.PersonalStateCoordinator] for the
+     * given node + credential, or null when this device is not enrolled (no X25519 key
+     * to unwrap a space key). Encrypted personal state — playlists, starred, play
+     * history, reading positions — decrypts ONLY on this device (Invariant 6). The
+     * coordinator is cheap and stateless; build one per use.
+     */
+    internal fun personalState(
+        baseUrl: String,
+        cred: Credential,
+    ): one.rarebit.heyarr.mobile.personalstate.PersonalStateCoordinator? {
+        val ring = keyring?.takeIf { it.isProvisioned() } ?: return null
+        return one.rarebit.heyarr.mobile.personalstate.PersonalStateCoordinator(
+            one.rarebit.heyarr.mobile.personalstate.SpaceSession(
+                one.rarebit.heyarr.mobile.personalstate.PersonalStateClient(transport, baseUrl, cred),
+                one.rarebit.heyarr.mobile.personalstate.KeyringDeviceEncKey(ring),
+            ),
+            spaceRegistry,
+        )
+    }
 
     /**
      * What is playing and how it came to be: planning, fallback and the one re-plan
