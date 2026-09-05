@@ -133,9 +133,28 @@ class AppViewModel internal constructor(
             one.rarebit.heyarr.mobile.personalstate.SpaceSession(
                 one.rarebit.heyarr.mobile.personalstate.PersonalStateClient(transport, baseUrl, cred),
                 one.rarebit.heyarr.mobile.personalstate.KeyringDeviceEncKey(ring),
+                additionalRecipients = { memberEncRecipients(ring) },
             ),
             spaceRegistry,
         )
+    }
+
+    /**
+     * The X25519 enc keys of the OTHER authorised member devices, so a space this phone
+     * creates is wrapped for them too and they can decrypt it (ADR-0049) — the peer half
+     * of the gateway acceptance. Derived from the membership this device already holds
+     * (each add op carries the device's `denc`); the recovery key is not obtainable on
+     * the phone (paper-secret only), so it stays out until it can be provisioned.
+     */
+    private fun memberEncRecipients(ring: DeviceKeyring): List<ByteArray> {
+        val usr = ring.userId() ?: return emptyList()
+        val view = runCatching { Membership.evaluate(usr, ring.knownOps(), nowSeconds()) }.getOrNull() ?: return emptyList()
+        val self = ring.peek()?.deviceEncKey
+        return view.members.values
+            .map { it.deviceEnc }
+            .filter { it.isNotEmpty() && it != self }
+            .distinct()
+            .mapNotNull { one.rarebit.heyarr.mobile.personalstate.parseX25519Recipient(it) }
     }
 
     /** The coordinator for the current node + credential (null before enrolment). */
