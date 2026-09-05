@@ -158,6 +158,9 @@ class AppViewModel(
         audioBridge = AudioSessionBridge(audio, reporter, viewModelScope)
     }
 
+    /** The reporter, for the reader activity to share (it runs outside this ViewModel). */
+    val progressReporter: one.rarebit.heyarr.mobile.consumption.ProgressReporter get() = reporter
+
     private var audioBridge: AudioSessionBridge? = null
 
     private val _config = MutableStateFlow(resolveConfig())
