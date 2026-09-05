@@ -19,12 +19,13 @@ internal class SpaceSession(
     private val device: DeviceEncKey,
     private val crypto: SpaceCrypto = VoidbindSpaceCrypto,
     /**
-     * Extra recipient X25519 public keys a newly-created space is also wrapped for —
-     * the user's recovery key (ADR-0022) and any other authorised device. Empty means
-     * "only this device can read it", the honest degraded default when no recovery
-     * recipient is known.
+     * Extra recipient X25519 public keys a newly-created space is also wrapped for, so a
+     * peer device can read it too (ADR-0022, ADR-0049): the OTHER authorised member
+     * devices (their `denc` keys, from the membership this device already folds) and,
+     * when it can be provisioned to the phone, the recovery key. Empty means "only this
+     * device can read it" — the honest degraded default before enrolment completes.
      */
-    private val recoveryRecipients: () -> List<ByteArray> = { emptyList() },
+    private val additionalRecipients: () -> List<ByteArray> = { emptyList() },
     private val newSpaceId: () -> String = { UUID.randomUUID().toString() },
     private val newTag: () -> String = { UUID.randomUUID().toString() },
     private val newWriter: () -> String = { UUID.randomUUID().toString() },
@@ -147,7 +148,7 @@ internal class SpaceSession(
         val key = crypto.newSpaceKey()
         val recipients = ArrayList<WrappedKeyEntry>()
         recipients.add(WrappedKeyEntry(device.recipientId(), crypto.seal(key, device.publicKey())))
-        for (pub in recoveryRecipients()) {
+        for (pub in additionalRecipients()) {
             recipients.add(WrappedKeyEntry("x25519:" + Hex.encode(pub), crypto.seal(key, pub)))
         }
         client.createSpace(id, kind, recipients)

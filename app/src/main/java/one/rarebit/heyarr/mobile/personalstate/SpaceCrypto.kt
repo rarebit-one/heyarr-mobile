@@ -39,3 +39,10 @@ internal interface DeviceEncKey {
     fun seed(): ByteArray
     fun recipientId(): String = "x25519:" + Hex.encode(publicKey())
 }
+
+/** Parse an `x25519:<hex>` recipient id (e.g. a member's `denc`) into a raw 32-byte public key, or null. */
+internal fun parseX25519Recipient(id: String): ByteArray? {
+    val hex = id.removePrefix("x25519:")
+    if (hex == id || hex.length != 64) return null
+    return Hex.decodeOrNull(hex)?.takeIf { it.size == 32 }
+}
