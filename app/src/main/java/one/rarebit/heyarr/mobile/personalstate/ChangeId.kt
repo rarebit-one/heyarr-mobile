@@ -77,4 +77,17 @@ internal object Hex {
         }
         return String(out)
     }
+
+    /** Decode lowercase hex, matching Go's `hex.DecodeString`; null on a malformed string. */
+    fun decodeOrNull(hex: String): ByteArray? {
+        if (hex.length % 2 != 0) return null
+        val out = ByteArray(hex.length / 2)
+        for (i in out.indices) {
+            val hi = Character.digit(hex[i * 2], 16)
+            val lo = Character.digit(hex[i * 2 + 1], 16)
+            if (hi < 0 || lo < 0) return null
+            out[i] = ((hi shl 4) or lo).toByte()
+        }
+        return out
+    }
 }

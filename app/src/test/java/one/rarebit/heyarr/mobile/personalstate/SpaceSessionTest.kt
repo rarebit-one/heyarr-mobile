@@ -26,7 +26,7 @@ class SpaceSessionTest {
             client = PersonalStateClient(server, server.base, Credential.Session("tok")),
             device = dev,
             crypto = IdentityCrypto(),
-            recoveryRecipients = { listOf(recoveryPub) },
+            additionalRecipients = { listOf(recoveryPub) },
             newSpaceId = { "space-${space++}" },
             newTag = { "tag${tag++}" },
             newWriter = { "w${writer++}" },
@@ -115,5 +115,37 @@ class SpaceSessionTest {
         // Folding twice does not create changes; the read is pure.
         s.playlist(id); s.playlist(id)
         assertEquals(2, server.changeCount(id))
+    }
+
+    @Test
+    fun aSpaceWrappedForAPeerMemberIsReadableByThatPeer() {
+        val server = FakeServer()
+        val peer = FakeDeviceKey(2)
+        // The phone mints a space wrapped for itself AND the peer member device.
+        val phone = SpaceSession(
+            client = PersonalStateClient(server, server.base, Credential.Session("t")),
+            device = device,
+            crypto = IdentityCrypto(),
+            additionalRecipients = { listOf(peer.publicKey()) },
+            newSpaceId = { "space-shared" },
+            newTag = { "tag0" },
+        )
+        val id = phone.createSpace("shared")
+        phone.addToPlaylist(id, "song")
+
+        assertEquals(setOf(device.recipientId(), peer.recipientId()), server.recipients(id))
+        // The peer — a different device — opens and reads the very same playlist.
+        val peerSession = SpaceSession(PersonalStateClient(server, server.base, Credential.Session("t")), peer, IdentityCrypto())
+        assertTrue(peerSession.canOpen(id))
+        assertEquals(listOf("song"), peerSession.playlist(id)!!.ids())
+    }
+
+    @Test
+    fun parsesX25519Recipients() {
+        val pub = FakeDeviceKey(3).publicKey()
+        assertTrue(parseX25519Recipient("x25519:" + Hex.encode(pub))!!.contentEquals(pub))
+        assertNull(parseX25519Recipient("ed25519:" + Hex.encode(pub))) // wrong algorithm
+        assertNull(parseX25519Recipient("x25519:zz")) // not hex / wrong length
+        assertNull(parseX25519Recipient(""))
     }
 }
