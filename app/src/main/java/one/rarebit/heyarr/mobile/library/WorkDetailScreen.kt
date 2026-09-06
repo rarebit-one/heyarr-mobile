@@ -6,12 +6,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -42,7 +45,9 @@ import one.rarebit.heyarr.mobile.search.SessionAuthority
 /**
  * One work: title / year / kind, its identity, its external ids (#431), its files with
  * quality + size and a **Play** per streamable one (`GET /works/{id}/assets`, joined,
- * #429), its wants (with the §64 status and the management actions the server has —
+ * #429) — for a **series**, those files are shown as seasons → episodes (a chip per
+ * season, an episode row per file, [Series] reads the numbers back from the edition
+ * label and the filename; the flat file list moves under Manage, #43) — its wants (with the §64 status and the management actions the server has —
  * cancel, pause/resume, retry, search again), and the followed source it came from
  * (tap → its detail). The work itself can now be **corrected** (`PATCH /works/{id}`)
  * and **removed** (`DELETE /works/{id}`, #428) from here.
@@ -61,6 +66,7 @@ fun WorkDetailScreen(
     onRefresh: () -> Unit,
     onBack: () -> Unit,
     onPlay: (Work, WorkAsset) -> Unit,
+    onPlayEpisode: (Work, Episode) -> Unit,
     onCancelWant: (Want) -> Unit,
     onSetMonitor: (Want, Boolean) -> Unit,
     onRetry: (Want) -> Unit,
@@ -88,6 +94,13 @@ fun WorkDetailScreen(
     // Once the delete took, leave the screen — the work is gone from the library.
     LaunchedEffect(loaded?.deleted) { if (loaded?.deleted == true) onWorkDeleted() }
 
+    // A series' files as seasons → episodes (#43). Empty for a film, and for a series
+    // whose files carry no episode marker at all — then the flat list is what there is.
+    val seasons = remember(loaded?.work?.kind, loaded?.assets) {
+        if (loaded != null && Series.isSeries(loaded.work.kind)) Series.seasons(loaded.assets) else emptyList()
+    }
+    var seasonIndex by remember { mutableStateOf(0) }
+
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             item {
@@ -99,13 +112,21 @@ fun WorkDetailScreen(
                     Text(state.message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp))
                 }
                 is WorkDetailUiState.Loaded -> {
+                    val isSeries = seasons.isNotEmpty()
                     item {
                         Header(state.work, posterUrl)
-                        // The one-tap play: the first file that holds bytes. The Files
-                        // section below still offers every file.
-                        state.assets.firstOrNull { !it.blobHash.isNullOrBlank() }?.let { first ->
-                            Button(onClick = { onPlay(state.work, first) }, modifier = Modifier.padding(bottom = 12.dp)) {
-                                Text(if (Route.hubFor(state.work.kind) == Route.HUB_BOOKS) "▶ Open" else "▶ Play")
+                        // The one-tap play: for a series the first episode in season order,
+                        // else the first file that holds bytes. The lists below offer every file.
+                        val firstEpisode = if (isSeries) Series.firstPlayable(seasons) else null
+                        if (firstEpisode != null) {
+                            Button(onClick = { onPlayEpisode(state.work, firstEpisode) }, modifier = Modifier.padding(bottom = 12.dp)) {
+                                Text("▶ Play ${firstEpisode.code ?: firstEpisode.label}")
+                            }
+                        } else if (!isSeries) {
+                            state.assets.firstOrNull { !it.blobHash.isNullOrBlank() }?.let { first ->
+                                Button(onClick = { onPlay(state.work, first) }, modifier = Modifier.padding(bottom = 12.dp)) {
+                                    Text(if (Route.hubFor(state.work.kind) == Route.HUB_BOOKS) "▶ Open" else "▶ Play")
+                                }
                             }
                         }
                     }
@@ -124,20 +145,50 @@ fun WorkDetailScreen(
                         }
                     }
 
-                    item { SectionTitle("Files", "${state.assets.size}") }
-                    if (state.assets.isEmpty()) {
-                        item { Text("No files in the catalog for this work yet.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp)) }
+                    if (isSeries) {
+                        // Seasons as chips, the chosen season's episodes as rows (#43).
+                        val season = seasons[seasonIndex.coerceIn(0, seasons.size - 1)]
+                        item { SectionTitle("Seasons", "${seasons.size}") }
+                        item {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 4.dp),
+                            ) {
+                                seasons.forEachIndexed { i, s ->
+                                    FilterChip(selected = s == season, onClick = { seasonIndex = i }, label = { Text(s.label) })
+                                }
+                            }
+                        }
+                        item { SectionTitle(season.label, "${season.episodes.size} episode" + if (season.episodes.size == 1) "" else "s") }
+                        items(season.episodes, key = { "episode:" + it.asset.id }) { ep ->
+                            EpisodeRow(
+                                episode = ep,
+                                notice = state.notices[ep.asset.id],
+                                busy = ep.asset.id in state.busy,
+                                onPlay = { onPlayEpisode(state.work, ep) },
+                            )
+                            HorizontalDivider()
+                        }
                     }
-                    items(state.assets, key = { "asset:" + it.id }) { asset ->
-                        AssetRow(
-                            asset = asset,
-                            notice = state.notices[asset.id],
-                            busy = asset.id in state.busy,
-                            canWrite = canWrite,
-                            onPlay = { onPlay(state.work, asset) },
-                            onRemove = { onRemoveAsset(asset) },
-                        )
-                        HorizontalDivider()
+
+                    // The flat file list: every file with its quality and the management
+                    // action. For a series it is the management view, so it sits under Manage.
+                    if (!isSeries || manageOpen) {
+                        item { SectionTitle("Files", "${state.assets.size}") }
+                        if (state.assets.isEmpty()) {
+                            item { Text("No files in the catalog for this work yet.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp)) }
+                        }
+                        items(state.assets, key = { "asset:" + it.id }) { asset ->
+                            AssetRow(
+                                asset = asset,
+                                notice = state.notices[asset.id],
+                                busy = asset.id in state.busy,
+                                canWrite = canWrite,
+                                onPlay = { onPlay(state.work, asset) },
+                                onRemove = { onRemoveAsset(asset) },
+                            )
+                            HorizontalDivider()
+                        }
                     }
 
                     item { SectionTitle("Wants", "${state.wants.size}") }
@@ -311,6 +362,39 @@ private fun SectionTitle(title: String, count: String?) {
     Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = MaterialTheme.typography.titleMedium)
         if (count != null) Text("  $count", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** One episode: its code + title, the file's quality line, missing state, and Play (#43). */
+@Composable
+private fun EpisodeRow(
+    episode: Episode,
+    notice: String?,
+    busy: Boolean,
+    onPlay: () -> Unit,
+) {
+    val asset = episode.asset
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(episode.label, style = MaterialTheme.typography.bodyLarge)
+            // The season is already the heading, so the quality line drops the edition label.
+            val quality = listOfNotNull(
+                asset.mime?.takeIf { it.isNotBlank() },
+                asset.sizeBytes?.let { WorkAsset.formatBytes(it) },
+            ).joinToString(" · ")
+            if (quality.isNotEmpty()) Text(quality, style = MaterialTheme.typography.bodySmall)
+            if (asset.isMissing) {
+                Text("missing since ${Timestamps.short(asset.missingSince) ?: asset.missingSince}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            } else if (!episode.isPlayable) {
+                Text("No blob to stream (a linked asset has none).", style = MaterialTheme.typography.labelSmall)
+            }
+            notice?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp)) }
+        }
+        Button(onClick = onPlay, enabled = episode.isPlayable && !busy) { Text("Play") }
     }
 }
 

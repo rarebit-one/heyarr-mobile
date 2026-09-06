@@ -19,7 +19,8 @@ class DecisionsTest {
 
     @Test fun aTapMeansTheRightThingPerHub() {
         assertEquals(Decisions.Tap.PLAY, Decisions.tapFor(Work(id = "1", title = "F", kind = "movie")))
-        assertEquals(Decisions.Tap.PLAY, Decisions.tapFor(Work(id = "1", title = "S", kind = "series")))
+        assertEquals(Decisions.Tap.OPEN_SERIES, Decisions.tapFor(Work(id = "1", title = "S", kind = "series")))
+        assertEquals(Decisions.Tap.OPEN_SERIES, Decisions.tapFor(Work(id = "1", title = "S", kind = "show")))
         assertEquals(Decisions.Tap.OPEN_ALBUM, Decisions.tapFor(Work(id = "1", title = "A", kind = "music")))
         assertEquals(Decisions.Tap.OPEN_READER, Decisions.tapFor(Work(id = "1", title = "B", kind = "book")))
         assertEquals(Decisions.Tap.PLAY, Decisions.tapFor(Work(id = "1", title = "?", kind = null)))

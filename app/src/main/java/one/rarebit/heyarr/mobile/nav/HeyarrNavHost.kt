@@ -50,6 +50,7 @@ import one.rarebit.heyarr.mobile.playlist.PlaylistsScreen
 import one.rarebit.heyarr.mobile.playlist.PlaylistsViewModel
 import one.rarebit.heyarr.mobile.hub.HubScreen
 import one.rarebit.heyarr.mobile.hub.HubViewModel
+import one.rarebit.heyarr.mobile.library.Series
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.LibraryScreen
 import one.rarebit.heyarr.mobile.library.Work
@@ -186,6 +187,8 @@ fun HeyarrNavHost(
                 Decisions.Tap.OPEN_ALBUM -> navController.navigate(Route.Album(work.id, work.title))
                 Decisions.Tap.OPEN_READER -> navController.navigate(Route.Reader(work.id, work.title))
                 Decisions.Tap.PLAY -> { vm.playback.stop(); vm.playback.play(work) }
+                // A series opens on its seasons and episodes; the play happens from an episode row.
+                Decisions.Tap.OPEN_SERIES -> openWork(work)
             }
         }
         val listen: (Work, List<WorkAsset>, Int) -> Unit = { work, tracks, start ->
@@ -315,6 +318,13 @@ fun HeyarrNavHost(
                     onPlay = { work, asset ->
                         if (MediaMime.isAudio(asset.mime, asset.filename)) listen(work, listOf(asset), 0)
                         else { audio.stop(); vm.playback.playAsset(work, asset) }
+                    },
+                    // An episode plays under its own name ("Yellowstone — S04E01 Half the Money"), not the filename.
+                    onPlayEpisode = { work, ep ->
+                        ep.asset.blobHash?.let { hash ->
+                            audio.stop()
+                            vm.playback.playFile(Series.playTitle(work, ep), ep.asset.id, hash, ep.asset.mime ?: work.mime, work.kind)
+                        }
                     },
                     onCancelWant = detailVm::cancelWant, onSetMonitor = detailVm::setMonitor,
                     onRetry = detailVm::retry, onSearchAgain = detailVm::searchAgain,

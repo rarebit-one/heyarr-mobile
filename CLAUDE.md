@@ -225,7 +225,10 @@ app/src/main/java/one/rarebit/heyarr/mobile/
   library/      LibraryClient (native /api/v1/works, paged, recent-first — the Library/Manage list) + WorksJson
                 (reads the ADR-0075 embeds from their own slices) + SubsonicClient stub + LibraryScreen (the
                 management list, pull-to-refresh) · WorkDetail{Client,Json,State,ViewModel,Screen} (poster header +
-                one-tap Play; files, wants, followed source; Manage is an expander, open when reached from Library)
+                one-tap Play; files, wants, followed source; Manage is an expander, open when reached from Library) ·
+                Series (pure, #43: a series' files → seasons → episodes — the season from the node's per-season
+                edition label, the number + title read back from the `SxxExx` filename; sidecars are not episodes.
+                The detail screen shows a chip per season and a Play per episode; a series card tap OPENS, never plays)
   playback/     PlaybackCoordinator (what is playing and how: plan against real capabilities, blob fallback, ONE
                 re-plan on a codec issue — unit-tested over a scripted transport) · PlaybackClient (blob-stream
                 target + /playback/plan) + Media3 player (HeyarrDataSource auth+Range data source, PlayerScreen,
