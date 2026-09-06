@@ -4,6 +4,7 @@ import one.rarebit.heyarr.mobile.library.Work
 import one.rarebit.heyarr.mobile.playback.AudioItem
 import one.rarebit.heyarr.mobile.playback.NowPlaying
 import one.rarebit.heyarr.mobile.playback.PlaybackClient
+import one.rarebit.heyarr.mobile.library.Series
 import one.rarebit.heyarr.mobile.library.WorkAsset
 import one.rarebit.heyarr.mobile.catalog.Artwork
 import one.rarebit.heyarr.mobile.music.trackTitle
@@ -15,13 +16,17 @@ import one.rarebit.heyarr.mobile.music.trackTitle
  */
 object Decisions {
 
-    /** What tapping a card does, per hub: a film plays, an album opens its tracks, a book opens the reader entry. */
-    enum class Tap { PLAY, OPEN_ALBUM, OPEN_READER }
+    /**
+     * What tapping a card does, per hub: a film plays, an album opens its tracks, a book
+     * opens the reader entry — and a series opens its seasons and episodes (#43): a tap
+     * on a show never means "play whichever file the node listed first".
+     */
+    enum class Tap { PLAY, OPEN_ALBUM, OPEN_READER, OPEN_SERIES }
 
     fun tapFor(work: Work): Tap = when (Route.hubFor(work.kind)) {
         Route.HUB_MUSIC -> Tap.OPEN_ALBUM
         Route.HUB_BOOKS -> Tap.OPEN_READER
-        else -> Tap.PLAY
+        else -> if (Series.isSeries(work.kind)) Tap.OPEN_SERIES else Tap.PLAY
     }
 
     /** What the full-screen player route renders: video pre-empts the audio queue; nothing means leave. */

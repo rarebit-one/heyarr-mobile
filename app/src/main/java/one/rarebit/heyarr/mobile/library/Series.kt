@@ -1,0 +1,206 @@
+package one.rarebit.heyarr.mobile.library
+
+/**
+ * One episode of a series: a work's file, read as **season → number → title**.
+ *
+ * heyarr-core groups an episodic work's files into one edition per season (its
+ * `identification/series.go`: the Edition of an episodic Work is its season, labelled
+ * `Season 02` / `Specials`), and `GET /works/{id}/assets` (#429) inlines that label on
+ * every file. The episode number and title are not on the wire — they live in the
+ * filename the scanner matched (`S04E01`, `2x05`, `Episode 5 - Title`), so this reads
+ * them back the same way the node did. Pure and JVM-tested (#43).
+ */
+data class Episode(
+    val asset: WorkAsset,
+    /** The season, `0` for specials, null when nothing names one. */
+    val season: Int?,
+    /** The episode number within the season, null when the filename carries none. */
+    val number: Int?,
+    /** The cleaned remainder of the filename after the episode marker, null when empty. */
+    val title: String?,
+) {
+    /**
+     * `S04E01` when both numbers are known, `E05` with only the number; null with no
+     * number at all — under a season heading a bare `S03` would say nothing.
+     */
+    val code: String?
+        get() = when {
+            season != null && number != null -> "S%02dE%02d".format(java.util.Locale.ROOT, season, number)
+            number != null -> "E%02d".format(java.util.Locale.ROOT, number)
+            else -> null
+        }
+
+    /** The one line the episode list shows: code + title, else the filename. */
+    val label: String
+        get() = listOfNotNull(code, title).joinToString(" ").ifBlank { asset.filename ?: asset.id }
+
+    val isPlayable: Boolean get() = asset.isPlayable
+}
+
+/** One season of a series, its episodes in order. [number] is `0` for specials, null when unknown. */
+data class Season(val number: Int?, val episodes: List<Episode>) {
+    val label: String get() = Series.seasonLabel(number)
+}
+
+object Series {
+
+    /** The server content types (and client kinds) that mean an episodic work. */
+    private val KINDS = setOf("series", "show", "tv", "television", "tvshow", "tv_show", "episode", "season")
+
+    /** True for a work whose files are episodes rather than one film. */
+    fun isSeries(kind: String?): Boolean = kind?.lowercase()?.trim() in KINDS
+
+    /** `Season 04` / `Specials` / `Episodes` for a season number. */
+    fun seasonLabel(number: Int?): String = when {
+        number == null -> "Episodes"
+        number == 0 -> "Specials"
+        else -> "Season $number"
+    }
+
+    /**
+     * A series' files as seasons, each with its episodes in order. Only episode files
+     * take part: a poster, a `.nfo`, a subtitle or a thumbnail the scan recorded as its
+     * own asset is a sidecar, not something to play. Numbered seasons come first in
+     * order, then Specials, then whatever named no season at all; within a season the
+     * episodes order by number, the unnumbered last, ties by filename.
+     */
+    fun seasons(assets: List<WorkAsset>): List<Season> {
+        val episodes = assets.mapNotNull { episode(it) }
+        if (episodes.isEmpty()) return emptyList()
+        return episodes.groupBy { it.season }
+            .map { (season, eps) ->
+                Season(season, eps.sortedWith(compareBy<Episode> { it.number == null }.thenBy { it.number ?: 0 }.thenBy { it.asset.filename ?: it.asset.id }))
+            }
+            .sortedWith(compareBy<Season> { seasonRank(it.number) }.thenBy { it.number ?: 0 })
+    }
+
+    /** The first episode that can play, in season order — what the header's Play means for a series. */
+    fun firstPlayable(seasons: List<Season>): Episode? =
+        seasons.asSequence().flatMap { it.episodes.asSequence() }.firstOrNull { it.isPlayable }
+
+    /** The player's title for an episode: `Yellowstone — S04E01 Half the Money`. */
+    fun playTitle(work: Work, episode: Episode): String = "${work.title} — ${episode.label}"
+
+    /**
+     * One file as an episode, or null when it is a sidecar. The season comes from the
+     * edition label first (the node's own grouping), else the filename, else a season
+     * directory on the source path; the number and title from the filename.
+     */
+    fun episode(asset: WorkAsset): Episode? {
+        if (!isEpisodeFile(asset)) return null
+        val stem = (asset.filename ?: asset.sourcePath?.substringAfterLast('/') ?: "").substringBeforeLast('.')
+        val marker = markerIn(stem)
+        val season = seasonOfLabel(asset.editionLabel) ?: marker?.season ?: seasonOfPath(asset.sourcePath)
+        val rest = marker?.let { stem.substring(it.end) } ?: stem
+        return Episode(asset = asset, season = season, number = marker?.number, title = episodeTitle(rest))
+    }
+
+    /** `Season 02` → 2, `Specials` → 0, anything else → null. */
+    fun seasonOfLabel(label: String?): Int? {
+        val l = label?.trim().orEmpty()
+        if (l.isEmpty()) return null
+        if (RE_SPECIALS_LABEL.matches(l)) return 0
+        return RE_SEASON_LABEL.matchEntire(l)?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    /** The season a `…/Season 02/…` or `…/Specials/…` directory on the source path implies. */
+    fun seasonOfPath(sourcePath: String?): Int? {
+        val dirs = sourcePath?.replace('\\', '/')?.substringBeforeLast('/', "")?.takeIf { it.isNotBlank() } ?: return null
+        for (d in dirs.split('/').asReversed()) {
+            val t = d.trim()
+            if (RE_SPECIALS_LABEL.matches(t)) return 0
+            RE_SEASON_DIR.matchEntire(t)?.let { return it.groupValues[1].toIntOrNull() }
+        }
+        return null
+    }
+
+    // ── Internals ────────────────────────────────────────────────────────────────
+
+    private class Marker(val season: Int?, val number: Int, val end: Int)
+
+    /** The episode marker in a filename stem: `S04E01` (also `S04E01E02`), `4x01`, `Episode 5`, `E05`, or a leading `05 -`. */
+    private fun markerIn(stem: String): Marker? {
+        RE_SXXEXX.find(stem)?.let { m ->
+            return Marker(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.range.last + 1)
+        }
+        RE_NXNN.find(stem)?.let { m ->
+            return Marker(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.range.last + 1)
+        }
+        RE_EPISODE_WORD.find(stem)?.let { m ->
+            return Marker(null, m.groupValues[1].toInt(), m.range.last + 1)
+        }
+        RE_LEADING_NUMBER.find(stem)?.let { m ->
+            return Marker(null, m.groupValues[1].toInt(), m.range.last + 1)
+        }
+        return null
+    }
+
+    /**
+     * The remainder of a filename after the marker, as a title: separators become
+     * spaces, and the text is cut at the first release-metadata token (`1080p`,
+     * `WEB-DL`, `x265`, a year, a bracketed tag, …) — a scene name usually *starts*
+     * its metadata right after the episode code, and `PROPER` is not an episode title.
+     */
+    internal fun episodeTitle(rest: String): String? {
+        val cleaned = rest.replace(RE_BRACKETS, " ").replace(RE_SEPARATORS, " ").trim().trimStart('-', '–', ':').trim()
+        if (cleaned.isEmpty()) return null
+        val kept = ArrayList<String>()
+        for (tok in cleaned.split(' ').filter { it.isNotBlank() }) {
+            if (isNoise(tok)) break
+            kept.add(tok)
+        }
+        return kept.joinToString(" ").trim().trimEnd('-', '–').trim().ifBlank { null }
+    }
+
+    private fun isNoise(token: String): Boolean {
+        val t = token.lowercase().trimEnd(',', ';')
+        // `x265-GRP`, `H264-NTb`: the release group rides on the codec with a hyphen.
+        val base = t.substringBefore('-')
+        return t in NOISE || base in NOISE ||
+            RE_RESOLUTION.matches(t) || RE_RESOLUTION.matches(base) ||
+            RE_YEAR.matches(t) ||
+            RE_CODEC.matches(t) || RE_CODEC.matches(base)
+    }
+
+    private fun isEpisodeFile(asset: WorkAsset): Boolean {
+        val role = asset.role?.lowercase()?.trim()
+        if (!role.isNullOrEmpty() && role != "primary") return false
+        val mime = asset.mime?.lowercase()?.substringBefore(';')?.trim()
+        if (mime != null && (mime.startsWith("image/") || mime.startsWith("text/") || mime == "application/xml")) return false
+        val ext = (asset.filename ?: asset.sourcePath ?: "").substringAfterLast('.', "").lowercase()
+        if (ext in SIDECAR_EXTENSIONS) return false
+        return true
+    }
+
+    private fun seasonRank(number: Int?): Int = when {
+        number == null -> 2
+        number == 0 -> 1
+        else -> 0
+    }
+
+    private val RE_SXXEXX = Regex("""(?i)(?<![a-z0-9])S(\d{1,3})[ ._-]?E(\d{1,3})(?:[ ._-]?E\d{1,3})*""")
+    private val RE_NXNN = Regex("""(?i)(?<![a-z0-9])(\d{1,2})x(\d{2,3})(?![a-z0-9])""")
+    private val RE_EPISODE_WORD = Regex("""(?i)(?<![a-z0-9])(?:episode|ep|e)[ ._-]*(\d{1,3})(?![a-z0-9])""")
+    private val RE_LEADING_NUMBER = Regex("""^\s*(\d{1,3})\s*[-._ ]+""")
+    private val RE_SEASON_LABEL = Regex("""(?i)^(?:season|series|staffel|saison|s)\s*(\d{1,3})$""")
+    private val RE_SEASON_DIR = Regex("""(?i)^(?:season|series|staffel|saison|stagione|temporada|seizoen|s)[ ._-]*(\d{1,3})(?:[^0-9].*)?$""")
+    private val RE_SPECIALS_LABEL = Regex("""(?i)^specials?$""")
+    private val RE_BRACKETS = Regex("""\[[^\]]*]|\([^)]*\)|\{[^}]*}""")
+    private val RE_SEPARATORS = Regex("""[._\s]+""")
+    private val RE_RESOLUTION = Regex("""^\d{3,4}[pi]$|^[248]k$""")
+    private val RE_YEAR = Regex("""^(19|20)\d{2}$""")
+    private val RE_CODEC = Regex("""^(x|h)\.?26[45]$|^hevc$|^avc$|^av1$|^xvid$|^divx$|^vp9$|^(aac|ac3|eac3|dts|ddp?|truehd|flac|opus)(\d.*)?$""")
+
+    private val NOISE = setOf(
+        "web", "web-dl", "webdl", "webrip", "web-rip", "bluray", "blu-ray", "bdrip", "brrip", "bdremux", "remux",
+        "hdtv", "pdtv", "dvdrip", "dvd", "hdr", "hdr10", "hdr10+", "dv", "dovi", "sdr", "uhd",
+        "proper", "repack", "rerip", "internal", "limited", "extended", "uncut", "remastered", "multi", "dual",
+        "subbed", "dubbed", "hc", "ws", "atmos", "amzn", "nf", "dsnp", "hmax", "pcok", "atvp", "hulu", "itunes",
+        "10bit", "8bit", "hi10p", "hi10", "sample",
+    )
+
+    private val SIDECAR_EXTENSIONS = setOf(
+        "nfo", "jpg", "jpeg", "png", "webp", "gif", "bmp", "tbn", "srt", "sub", "idx", "ass", "ssa", "vtt", "sup",
+        "txt", "xml", "json", "md5", "sfv", "db", "ini", "url", "torrent",
+    )
+}
