@@ -171,22 +171,23 @@ fun HeyarrNavHost(
 
     val backStack by navController.currentBackStackEntryAsState()
     val destination = backStack?.destination
-    val currentRoute: Route? = when {
-        destination == null -> null
-        destination.hasRoute(Route.Home::class) -> Route.Home
-        destination.hasRoute(Route.Discover::class) -> Route.Discover
-        destination.hasRoute(Route.Search::class) -> Route.Search
-        destination.hasRoute(Route.Library::class) -> Route.Library
-        destination.hasRoute(Route.Missing::class) -> Route.Missing
-        destination.hasRoute(Route.Cast::class) -> Route.Cast
-        destination.hasRoute(Route.Settings::class) -> Route.Settings
-        destination.hasRoute(Route.Telemetry::class) -> Route.Telemetry
-        destination.hasRoute(Route.Device::class) -> Route.Device
-        destination.hasRoute(Route.Playlists::class) -> Route.Playlists
-        destination.hasRoute(Route.Playlist::class) -> backStack?.toRoute<Route.Playlist>()
-        destination.hasRoute(Route.Detail::class) -> backStack?.toRoute<Route.Detail>()
-        destination.hasRoute(Route.Player::class) -> Route.Player
-        else -> null
+    val currentRoute: Route? = destination?.let { d ->
+        when {
+            d.hasRoute(Route.Home::class) -> Route.Home
+            d.hasRoute(Route.Discover::class) -> Route.Discover
+            d.hasRoute(Route.Search::class) -> Route.Search
+            d.hasRoute(Route.Library::class) -> Route.Library
+            d.hasRoute(Route.Missing::class) -> Route.Missing
+            d.hasRoute(Route.Cast::class) -> Route.Cast
+            d.hasRoute(Route.Settings::class) -> Route.Settings
+            d.hasRoute(Route.Telemetry::class) -> Route.Telemetry
+            d.hasRoute(Route.Device::class) -> Route.Device
+            d.hasRoute(Route.Playlists::class) -> Route.Playlists
+            d.hasRoute(Route.Playlist::class) -> backStack?.toRoute<Route.Playlist>()
+            d.hasRoute(Route.Detail::class) -> backStack?.toRoute<Route.Detail>()
+            d.hasRoute(Route.Player::class) -> Route.Player
+            else -> null
+        }
     }
     val fullScreen = Route.isFullScreen(currentRoute) || video.fullscreen
     val currentSection = Decisions.section(currentRoute)
@@ -288,7 +289,7 @@ fun HeyarrNavHost(
                                 composable<Route.Cast> { CastScreen(session, holder.cast, modifier = content) }
                                 composable<Route.Settings> {
                                     SettingsScreen(
-                                        session, holder.settings, config, authority,
+                                        session, holder.settingsState, config, authority,
                                         onSaveConnection = vm::updateSettings, onResetConnection = vm::resetSettings, onSignOut = vm::signOut,
                                         onTelemetry = { open(Route.Telemetry) }, onDevice = { open(Route.Device) },
                                         onSourcesChanged = { holder.search.invalidateSources() }, modifier = content, deviceSummary = deviceSummary,

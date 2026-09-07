@@ -43,7 +43,7 @@ class SessionHolder(
     val library = LibraryState()
     val missing = MissingState()
     val cast = CastState()
-    val settings = SettingsState()
+    val settingsState = SettingsState()
     val telemetry = TelemetryState()
     val player = PlayerScreenState()
     val details = mutableStateMapOf<String, DetailState>()

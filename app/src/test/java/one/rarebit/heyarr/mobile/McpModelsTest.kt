@@ -138,7 +138,7 @@ class McpModelsTest {
         assertEquals(11, api.works().size)
         assertEquals("Yellowstone", api.work(Fixtures.YELLOWSTONE)?.title)
         assertEquals(Fixtures.HASH, api.work(Fixtures.YELLOWSTONE)?.blobHash)
-        assertEquals(29, api.assets(Fixtures.YELLOWSTONE).size)
+        assertEquals(34, api.assets(Fixtures.YELLOWSTONE).size)
         assertEquals(5, api.desired().size)
         assertEquals(3, api.qualityProfiles().size)
         assertEquals(1, api.continueRail().size)
