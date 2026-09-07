@@ -2,50 +2,39 @@ package one.rarebit.heyarr.mobile
 
 import kotlinx.serialization.json.Json
 import one.rarebit.heyarr.mobile.nav.Route
+import one.rarebit.heyarr.mobile.nav.detailRoute
+import one.rarebit.heyarr.mobile.theme.MediaType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/** Routes carry ids and display hints only, and round-trip through the serializer Navigation uses. */
 class RoutesTest {
 
-    @Test fun contentTypesMapToHubs() {
-        val table = mapOf(
-            "movie" to Route.HUB_VIDEO, "series" to Route.HUB_VIDEO, "episode" to Route.HUB_VIDEO,
-            "music" to Route.HUB_MUSIC, "album" to Route.HUB_MUSIC, "track" to Route.HUB_MUSIC,
-            "book" to Route.HUB_BOOKS, "comic" to Route.HUB_BOOKS, "audiobook" to Route.HUB_BOOKS,
-            " Music " to Route.HUB_MUSIC, null to Route.HUB_VIDEO, "whatever" to Route.HUB_VIDEO,
-        )
-        table.forEach { (kind, hub) -> assertEquals("hubFor($kind)", hub, Route.hubFor(kind)) }
+    @Test fun aDetailRouteCarriesTheKindByNameAndReadsItBack() {
+        val r = detailRoute("w-1", MediaType.SERIES, "Yellowstone", from = "Home", curate = true)
+        assertEquals("SERIES", r.type)
+        assertEquals(MediaType.SERIES, r.typeHint)
+        assertTrue(r.curate)
+        val json = Json.encodeToString(Route.Detail.serializer(), r)
+        assertEquals(r, Json.decodeFromString(Route.Detail.serializer(), json))
     }
 
-    @Test fun everyHubListsAtLeastOneContentType() {
-        Route.hubs.forEach { assertTrue(it, Route.contentTypesOf(it).isNotEmpty()) }
-        assertEquals(listOf("movie", "series"), Route.contentTypesOf(Route.HUB_VIDEO))
+    @Test fun anUnknownKindWordFallsBackToUnknown() {
+        assertEquals(MediaType.UNKNOWN, Route.Detail("w", type = "whatever").typeHint)
+        assertEquals(MediaType.UNKNOWN, Route.Detail("w").typeHint)
     }
 
-    @Test fun onlyThePlayerIsFullScreen() {
+    @Test fun onlyThePlayerOwnsTheWholeScreen() {
         assertTrue(Route.isFullScreen(Route.Player))
         assertFalse(Route.isFullScreen(Route.Home))
-        assertFalse(Route.isFullScreen(Route.WorkDetail("w1")))
-        assertFalse(Route.isFullScreen(Route.Playlists))
-        assertFalse(Route.isFullScreen(Route.Playlist("space-1")))
+        assertFalse(Route.isFullScreen(Route.Detail("w")))
         assertFalse(Route.isFullScreen(null))
     }
 
-    @Test fun routesWithArgumentsRoundTrip() {
-        val detail = Route.WorkDetail(id = "w:1/x", title = "Dune", manage = true)
-        assertEquals(detail, Json.decodeFromString<Route.WorkDetail>(Json.encodeToString(Route.WorkDetail.serializer(), detail)))
-        val hub = Route.Hub(Route.HUB_BOOKS)
-        assertEquals(hub, Json.decodeFromString<Route.Hub>(Json.encodeToString(Route.Hub.serializer(), hub)))
-        val src = Route.SourceDetail("s9")
-        assertEquals(src, Json.decodeFromString<Route.SourceDetail>(Json.encodeToString(Route.SourceDetail.serializer(), src)))
-        val pl = Route.Playlist(spaceId = "sp:1/x", title = "Roadtrip")
-        assertEquals(pl, Json.decodeFromString<Route.Playlist>(Json.encodeToString(Route.Playlist.serializer(), pl)))
-    }
-
-    @Test fun titleHintDefaultsToNull() {
-        assertEquals(null, Route.WorkDetail("w1").title)
-        assertFalse(Route.WorkDetail("w1").manage)
+    @Test fun playlistRoutesRoundTrip() {
+        val p = Route.Playlist("space-1", "Road trip")
+        assertEquals(p, Json.decodeFromString(Route.Playlist.serializer(), Json.encodeToString(Route.Playlist.serializer(), p)))
     }
 }

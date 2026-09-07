@@ -1,26 +1,40 @@
 package one.rarebit.heyarr.mobile.nav
 
-import android.widget.Toast
+import android.app.Activity
+import android.content.pm.ActivityInfo
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavDestination.Companion.hasRoute
-import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -28,543 +42,338 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
-import okhttp3.OkHttpClient
+import kotlinx.coroutines.launch
+import one.rarebit.heyarr.mobile.AppGraph
 import one.rarebit.heyarr.mobile.AppViewModel
-import one.rarebit.heyarr.mobile.HeyarrTopBar
 import one.rarebit.heyarr.mobile.device.EnrolScreen
-import one.rarebit.heyarr.mobile.acquisition.WantDetailScreen
-import one.rarebit.heyarr.mobile.acquisition.WantDetailViewModel
-import one.rarebit.heyarr.mobile.acquisition.WantsClient
-import one.rarebit.heyarr.mobile.acquisition.WantsScreen
-import one.rarebit.heyarr.mobile.acquisition.WantsViewModel
-import one.rarebit.heyarr.mobile.catalog.Artwork
-import one.rarebit.heyarr.mobile.catalog.CatalogClient
-import one.rarebit.heyarr.mobile.catalog.ContinueClient
-import one.rarebit.heyarr.mobile.home.HomeScreen
-import one.rarebit.heyarr.mobile.home.HomeViewModel
+import one.rarebit.heyarr.mobile.device.EnrolUiState
+import one.rarebit.heyarr.mobile.library.LibraryClient
+import one.rarebit.heyarr.mobile.library.Work
+import one.rarebit.heyarr.mobile.playback.PlaybackClient
+import one.rarebit.heyarr.mobile.playback.PlaybackProgress
 import one.rarebit.heyarr.mobile.playlist.AddToPlaylistDialog
 import one.rarebit.heyarr.mobile.playlist.PersonalActionsViewModel
 import one.rarebit.heyarr.mobile.playlist.PlaylistScreen
 import one.rarebit.heyarr.mobile.playlist.PlaylistViewModel
 import one.rarebit.heyarr.mobile.playlist.PlaylistsScreen
 import one.rarebit.heyarr.mobile.playlist.PlaylistsViewModel
-import one.rarebit.heyarr.mobile.hub.HubScreen
-import one.rarebit.heyarr.mobile.hub.HubViewModel
-import one.rarebit.heyarr.mobile.library.Series
-import one.rarebit.heyarr.mobile.library.LibraryClient
-import one.rarebit.heyarr.mobile.library.LibraryScreen
-import one.rarebit.heyarr.mobile.library.Work
-import one.rarebit.heyarr.mobile.library.WorkDetailClient
-import one.rarebit.heyarr.mobile.library.WorkDetailScreen
-import one.rarebit.heyarr.mobile.library.WorkDetailUiState
-import one.rarebit.heyarr.mobile.library.WorkDetailViewModel
-import one.rarebit.heyarr.mobile.login.LoginUiState
-import one.rarebit.heyarr.mobile.library.WorkAsset
-import one.rarebit.heyarr.mobile.music.AlbumScreen
-import one.rarebit.heyarr.mobile.music.AlbumViewModel
-import one.rarebit.heyarr.mobile.music.ArtistScreen
-import one.rarebit.heyarr.mobile.music.ArtistViewModel
-import one.rarebit.heyarr.mobile.music.ArtistsScreen
-import one.rarebit.heyarr.mobile.music.ArtistsViewModel
-import one.rarebit.heyarr.mobile.music.MusicClient
-import one.rarebit.heyarr.mobile.music.trackTitle
-import one.rarebit.heyarr.mobile.playback.AudioItem
-import one.rarebit.heyarr.mobile.playback.AudioPlayer
-import one.rarebit.heyarr.mobile.playback.MediaMime
-import one.rarebit.heyarr.mobile.playback.MiniPlayer
-import one.rarebit.heyarr.mobile.playback.NowPlayingScreen
-import one.rarebit.heyarr.mobile.playback.PlaybackClient
-import one.rarebit.heyarr.mobile.playback.PlaybackProgress
-import one.rarebit.heyarr.mobile.playback.PlayerScreen
 import one.rarebit.heyarr.mobile.reader.ReaderActivity
-import one.rarebit.heyarr.mobile.reader.ReaderEntryScreen
-import one.rarebit.heyarr.mobile.search.FollowedSourceDetailScreen
-import one.rarebit.heyarr.mobile.search.FollowingClient
-import one.rarebit.heyarr.mobile.search.FollowingScreen
-import one.rarebit.heyarr.mobile.search.SearchScreen
-import one.rarebit.heyarr.mobile.search.SearchViewModel
-import one.rarebit.heyarr.mobile.sessionSubtitle
-
-/** The bottom bar, in order. `Manage` is labelled "Library": that is what it manages. */
-private data class Tab(val route: Route, val label: String, val glyph: String)
-
-private val tabs = listOf(
-    Tab(Route.Home, "Home", "⌂"),
-    Tab(Route.Search, "Search", "⌕"),
-    Tab(Route.Manage, "Library", "▤"),
-    Tab(Route.Device, "Device", "⚿"),
-)
+import one.rarebit.heyarr.mobile.state.Connection
+import one.rarebit.heyarr.mobile.state.Toast
+import one.rarebit.heyarr.mobile.theme.HeyarrTheme
+import one.rarebit.heyarr.mobile.theme.LocalAppearance
+import one.rarebit.heyarr.mobile.theme.MediaThemes
+import one.rarebit.heyarr.mobile.theme.MediaType
+import one.rarebit.heyarr.mobile.theme.Tokens
+import one.rarebit.heyarr.mobile.ui.components.HeyarrBottomBar
+import one.rarebit.heyarr.mobile.ui.components.HeyarrNavRail
+import one.rarebit.heyarr.mobile.ui.components.NowPlayingBar
+import one.rarebit.heyarr.mobile.ui.components.OfflineBanner
+import one.rarebit.heyarr.mobile.ui.components.ToastCard
+import one.rarebit.heyarr.mobile.ui.screens.AudioQueueScreen
+import one.rarebit.heyarr.mobile.ui.screens.CastScreen
+import one.rarebit.heyarr.mobile.ui.screens.DetailPlayback
+import one.rarebit.heyarr.mobile.ui.screens.DetailScreen
+import one.rarebit.heyarr.mobile.ui.screens.HomeScreen
+import one.rarebit.heyarr.mobile.ui.screens.LibraryScreen
+import one.rarebit.heyarr.mobile.ui.screens.MissingScreen
+import one.rarebit.heyarr.mobile.ui.screens.PersonalRows
+import one.rarebit.heyarr.mobile.ui.screens.PlayerScreen
+import one.rarebit.heyarr.mobile.ui.screens.SearchScreen
+import one.rarebit.heyarr.mobile.ui.screens.SettingsScreen
+import one.rarebit.heyarr.mobile.ui.screens.TelemetryScreen
+import one.rarebit.heyarr.mobile.ui.screens.WantRequest
+import one.rarebit.heyarr.mobile.ui.screens.WantSheet
 
 /**
- * The signed-in app: a bottom bar over a typed navigation graph ([Route]), with the
- * player as a full-screen destination rather than an overlay that pre-empts the tabs.
+ * The signed-in app: the design system's shell — a bottom bar on a phone, a left rail
+ * from [Tokens.railBreakpoint] up — over a typed navigation graph ([Route]), with the
+ * offline banner, the persistent now-playing bar, the toast stack and the Want sheet
+ * around it. The accent in force follows the media of the screen in focus (a series
+ * detail turns the bar violet), per the appearance preference.
  *
- * Every screen's clients are built from one [ApiEnv] snapshot and its ViewModel keyed
- * on it, so a node or credential-shape change rebuilds them (the discipline the
- * Search ViewModel already followed by hand). Nothing here touches auth or enrolment:
- * those screens are re-homed as routes and take the same props they always did.
+ * Every screen reads one [SessionHolder] keyed on the [ApiEnv] snapshot, so a node or
+ * credential-shape change rebuilds the session rather than keeping a stale client.
+ * Nothing here touches auth or enrolment: those screens are re-homed as routes and
+ * take the same props they always did.
  */
 @UnstableApi
 @Composable
 fun HeyarrNavHost(
     vm: AppViewModel,
-    httpClient: OkHttpClient,
-    audio: AudioPlayer,
+    graph: AppGraph,
     focusDevice: Int,
-    onSettings: () -> Unit,
     navController: NavHostController = rememberNavController(),
 ) {
     val config by vm.configState.collectAsStateWithLifecycle()
-    val loginState by vm.loginState.collectAsStateWithLifecycle()
     val authority by vm.sessionAuthority.collectAsStateWithLifecycle()
-    val libraryState by vm.libraryState.collectAsStateWithLifecycle()
-    val libraryRefreshing by vm.libraryRefreshing.collectAsStateWithLifecycle()
     val enrolState by vm.enrolState.collectAsStateWithLifecycle()
     val parkedInvite by vm.parkedInvite.collectAsStateWithLifecycle()
     val nowPlaying by vm.playback.nowPlaying.collectAsStateWithLifecycle()
     val playbackNotice by vm.playback.notice.collectAsStateWithLifecycle()
+    val audio = graph.audio
+    val video = graph.video
     val audioState by audio.state.collectAsStateWithLifecycle()
 
     val credential = vm.credentialOrNull() ?: return
     val env = ApiEnv(config.baseUrl, config.defaultQualityProfile, credential, vm.transport)
-
-    // Surface a "cannot stream" notice once, then clear it.
-    val context = LocalContext.current
-    LaunchedEffect(playbackNotice) {
-        playbackNotice?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show(); vm.playback.clearNotice() }
-    }
-    // Something started playing: put the player in front. It pops itself when stopped.
-    // Video and the audio queue are exclusive: starting one stops the other.
-    LaunchedEffect(nowPlaying != null) {
-        if (nowPlaying != null) { audio.stop(); navController.navigate(Route.Player) { launchSingleTop = true } }
-    }
-    // A deep-linked invite (each one bumps focusDevice) opens the Device tab.
-    LaunchedEffect(focusDevice) { if (focusDevice > 0) navController.navigateTab(Route.Device) }
-
-    // The search/acquire/following features share one ViewModel across their routes.
-    val searchVm: SearchViewModel = viewModel(
-        key = "search:${env.key}",
-        factory = viewModelFactory { initializer { SearchViewModel(config, env.credential, env.transport) } },
+    val holder: SessionHolder = viewModel(
+        key = "session:${env.key}",
+        factory = viewModelFactory { initializer { SessionHolder(env, graph.settings, graph.external, graph.recent) } },
     )
+    val session = holder.session
+    val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+    var want by remember { mutableStateOf<WantRequest?>(null) }
+    var openPlayerOnAudio by remember { mutableStateOf(false) }
+
+    LaunchedEffect(session) { session.startHeartbeat(); session.refreshIndex() }
+    LaunchedEffect(playbackNotice) { playbackNotice?.let { session.toast(Toast.Kind.INFO, it); vm.playback.clearNotice() } }
+    LaunchedEffect(video) {
+        video.onProgress = { p ->
+            when (p.event) {
+                PlaybackProgress.Event.TICK -> vm.playback.reportProgress(p.seconds)
+                PlaybackProgress.Event.PAUSED -> vm.playback.reportPause(p.seconds)
+                PlaybackProgress.Event.RESUMED -> vm.playback.reportResume(p.seconds)
+                PlaybackProgress.Event.ENDED -> vm.playback.reportEnded(p.seconds, completed = true)
+                PlaybackProgress.Event.LEFT -> vm.playback.reportEnded(p.seconds, completed = false)
+            }
+        }
+        video.onIssue = vm.playback::onIssue
+    }
+    // What the coordinator resolved is what the session plays; a new asset puts the player in front.
+    var lastStartedAsset by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(nowPlaying) {
+        val np = nowPlaying
+        if (np == null) { video.stop(); lastStartedAsset = null; return@LaunchedEffect }
+        audio.stop()
+        video.load(np)
+        if (np.assetId != lastStartedAsset) { lastStartedAsset = np.assetId; navController.navigate(Route.Player) { launchSingleTop = true } }
+    }
+    LaunchedEffect(audioState.item?.assetId) {
+        if (openPlayerOnAudio && audioState.item != null) { openPlayerOnAudio = false; navController.navigate(Route.Player) { launchSingleTop = true } }
+    }
+    // Fullscreen is first-class: landscape and no system bars while it is on.
+    LaunchedEffect(video.fullscreen) {
+        val activity = context as? Activity ?: return@LaunchedEffect
+        val controller = WindowCompat.getInsetsController(activity.window, view)
+        if (video.fullscreen) {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+    LaunchedEffect(focusDevice) { if (focusDevice > 0) navController.navigate(Route.Device) { launchSingleTop = true } }
 
     val backStack by navController.currentBackStackEntryAsState()
     val destination = backStack?.destination
-    val fullScreen = destination?.hasRoute(Route.Player::class) == true
-    val user = (loginState as? LoginUiState.Approved)?.user
+    val currentRoute: Route? = when {
+        destination == null -> null
+        destination.hasRoute(Route.Home::class) -> Route.Home
+        destination.hasRoute(Route.Discover::class) -> Route.Discover
+        destination.hasRoute(Route.Search::class) -> Route.Search
+        destination.hasRoute(Route.Library::class) -> Route.Library
+        destination.hasRoute(Route.Missing::class) -> Route.Missing
+        destination.hasRoute(Route.Cast::class) -> Route.Cast
+        destination.hasRoute(Route.Settings::class) -> Route.Settings
+        destination.hasRoute(Route.Telemetry::class) -> Route.Telemetry
+        destination.hasRoute(Route.Device::class) -> Route.Device
+        destination.hasRoute(Route.Playlists::class) -> Route.Playlists
+        destination.hasRoute(Route.Playlist::class) -> backStack?.toRoute<Route.Playlist>()
+        destination.hasRoute(Route.Detail::class) -> backStack?.toRoute<Route.Detail>()
+        destination.hasRoute(Route.Player::class) -> Route.Player
+        else -> null
+    }
+    val fullScreen = Route.isFullScreen(currentRoute) || video.fullscreen
+    val currentSection = Decisions.section(currentRoute)
+    val focusType = when (val r = currentRoute) {
+        is Route.Detail -> holder.details[r.workId]?.detail?.kind?.let { MediaType.from(it) } ?: r.typeHint
+        Route.Player -> video.current?.kind?.let { MediaType.from(it) } ?: if (audioState.item != null) MediaType.MUSIC else MediaType.MOVIE
+        Route.Playlists, is Route.Playlist -> MediaType.MUSIC
+        else -> MediaType.MOVIE
+    }
+    val shellTheme = if (session.appearance.adaptiveAccents) MediaThemes.of(focusType) else MediaThemes.default
 
-    Scaffold(
-        topBar = {
-            if (!fullScreen) HeyarrTopBar(subtitle = sessionSubtitle(user, authority, config.baseUrl), onSettings = onSettings)
+    // Encrypted personal state (playlists, starred, history), decrypted on-device.
+    val personalActions: PersonalActionsViewModel = viewModel(
+        key = "personal:${env.key}",
+        factory = viewModelFactory { initializer { PersonalActionsViewModel(vm.personalState(env.baseUrl, env.credential), LibraryClient(env.transport, env.baseUrl, env.credential)) } },
+    )
+    val starredIds by personalActions.starredIds.collectAsStateWithLifecycle()
+    val starredWorks by personalActions.starredWorks.collectAsStateWithLifecycle()
+    val recentWorks by personalActions.recentWorks.collectAsStateWithLifecycle()
+    val addTarget by personalActions.addTarget.collectAsStateWithLifecycle()
+    val playlistsForAdd by personalActions.playlists.collectAsStateWithLifecycle()
+    val personalRows = PersonalRows(
+        starred = starredWorks, recentlyPlayed = recentWorks, starredIds = starredIds,
+        onToggleStar = if (personalActions.enabled) ({ w: Work -> personalActions.toggleStar(w.id) }) else null,
+        onAddToPlaylist = if (personalActions.enabled) ({ w: Work -> personalActions.openAddToPlaylist(w.id) }) else null,
+        onOpenPlaylists = if (personalActions.enabled) ({ navController.navigate(Route.Playlists) }) else null,
+    )
+
+    val onWant: (String, String) -> Unit = { id, title -> want = WantRequest(id, title) }
+    val play = DetailPlayback(
+        playVideo = { work, assetId, hash, mime, title, start, queue, art ->
+            personalActions.recordPlay(work.id)
+            video.queue = queue
+            vm.playback.playFile(title, assetId, hash, mime, work.kind, start, art)
         },
-        bottomBar = {
-            if (!fullScreen) {
-                Column {
-                    if (Decisions.showMiniPlayer(fullScreen, audioState.item)) {
-                        MiniPlayer(state = audioState, onOpen = { navController.navigate(Route.Player) { launchSingleTop = true } },
-                            onTogglePlay = audio::togglePlayPause, onNext = audio::next)
-                    }
-                NavigationBar {
-                    tabs.forEach { tab ->
-                        val selected = destination?.hierarchy?.any { it.hasRoute(tab.route::class) } == true
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = { navController.navigateTab(tab.route) },
-                            icon = { Text(tab.glyph) },
-                            label = { Text(tab.label) },
-                        )
-                    }
-                }
-                }
-            }
-        },
-    ) { padding ->
-        val content = Modifier.fillMaxSize().padding(padding)
-        val openWork: (Work) -> Unit = { navController.navigate(Route.WorkDetail(it.id, it.title)) }
-        // A tap on a card means different things per hub: a film plays, an album opens
-        // its tracks (the queue is the music experience), a book opens the reader entry.
-        val playOrOpen: (Work) -> Unit = { work ->
-            when (Decisions.tapFor(work)) {
-                Decisions.Tap.OPEN_ALBUM -> navController.navigate(Route.Album(work.id, work.title))
-                Decisions.Tap.OPEN_READER -> navController.navigate(Route.Reader(work.id, work.title))
-                Decisions.Tap.PLAY -> { vm.playback.stop(); vm.playback.play(work) }
-                // A series opens on its seasons and episodes; the play happens from an episode row.
-                Decisions.Tap.OPEN_SERIES -> openWork(work)
-            }
-        }
-        val listen: (Work, List<WorkAsset>, Int) -> Unit = { work, tracks, start ->
+        playAudio = { work, tracks, start ->
+            personalActions.recordPlay(work.id)
             vm.playback.stop()
             val (items, index) = Decisions.queueFor(env.baseUrl, work, tracks, start)
-            if (items.isNotEmpty()) audio.playQueue(items, index)
-        }
-
-        // Encrypted personal state (playlists, starred, history), decrypted on-device.
-        // One shared instance per node+credential, so a ★ / add-to-playlist tap on any
-        // screen and the Home rows read and write the same state.
-        val personalActions: PersonalActionsViewModel = viewModel(
-            key = "personal:${env.key}",
-            factory = viewModelFactory {
-                initializer {
-                    PersonalActionsViewModel(
-                        vm.personalState(env.baseUrl, env.credential),
-                        LibraryClient(env.transport, env.baseUrl, env.credential),
-                    )
-                }
-            },
-        )
-        val starredIds by personalActions.starredIds.collectAsStateWithLifecycle()
-        val starredWorks by personalActions.starredWorks.collectAsStateWithLifecycle()
-        val recentWorks by personalActions.recentWorks.collectAsStateWithLifecycle()
-        val addTarget by personalActions.addTarget.collectAsStateWithLifecycle()
-        val playlistsForAdd by personalActions.playlists.collectAsStateWithLifecycle()
-
-        /** Play a playlist (its playable works) as an audio queue. */
-        val playPlaylist: (List<Work>) -> Unit = { works ->
-            val items = works.filter { !it.blobHash.isNullOrBlank() }.map { w ->
-                AudioItem(
-                    assetId = w.primaryAssetId ?: w.id, workId = w.id, title = w.title, artist = w.artist, album = null,
-                    artworkUrl = Artwork.posterUrl(env.baseUrl, w),
-                    contentUrl = PlaybackClient.blobContentUrl(env.baseUrl, w.blobHash!!), mime = w.mime,
-                )
+            if (items.isNotEmpty()) { openPlayerOnAudio = true; audio.playQueue(items, index) }
+        },
+        read = { work, asset ->
+            asset.blobHash?.let { hash ->
+                personalActions.recordPlay(work.id)
+                audio.stop()
+                context.startActivity(ReaderActivity.intent(context, asset.id, PlaybackClient.blobContentUrl(env.baseUrl, hash), work.title))
             }
-            if (items.isNotEmpty()) { vm.playback.stop(); audio.playQueue(items, 0) }
-        }
-
-        NavHost(navController = navController, startDestination = Route.Home) {
-            composable<Route.Home> {
-                val homeVm: HomeViewModel = viewModel(
-                    key = "home:${env.key}",
-                    factory = viewModelFactory {
-                        initializer {
-                            HomeViewModel(
-                                CatalogClient(env.transport, env.baseUrl, env.credential),
-                                ContinueClient(env.transport, env.baseUrl, env.credential),
-                            )
-                        }
-                    },
-                )
-                val home by homeVm.state.collectAsStateWithLifecycle()
-                HomeScreen(
-                    state = home, baseUrl = env.baseUrl, onRefresh = { homeVm.refresh(); personalActions.refresh() },
-                    onOpenHub = { navController.navigate(Route.Hub(it)) },
-                    onOpenWork = openWork,
-                    onPlay = { w -> personalActions.recordPlay(w.id); playOrOpen(w) },
-                    modifier = content,
-                    onContinue = { e -> e.blobHash?.let { vm.playback.playFile(e.workTitle, e.assetId, it, e.mime, e.contentType, startSeconds = e.positionSeconds) } },
-                    onOpenContinue = { navController.navigate(Route.WorkDetail(it.workId, it.workTitle)) },
-                    starredWorks = starredWorks, recentWorks = recentWorks, starredIds = starredIds,
-                    onOpenPlaylists = if (personalActions.enabled) ({ navController.navigate(Route.Playlists) }) else null,
-                    onToggleStar = if (personalActions.enabled) ({ w: Work -> personalActions.toggleStar(w.id) }) else null,
-                    onAddToPlaylist = if (personalActions.enabled) ({ w: Work -> personalActions.openAddToPlaylist(w.id) }) else null,
-                )
-            }
-            composable<Route.Hub> { entry ->
-                val hub = entry.toRoute<Route.Hub>().kind
-                val hubVm: HubViewModel = viewModel(
-                    key = "hub:$hub:${env.key}",
-                    factory = viewModelFactory { initializer { HubViewModel(hub, CatalogClient(env.transport, env.baseUrl, env.credential)) } },
-                )
-                val hubState by hubVm.state.collectAsStateWithLifecycle()
-                HubScreen(
-                    state = hubState, baseUrl = env.baseUrl,
-                    onSelectContentType = hubVm::selectContentType, onToggleSort = hubVm::toggleSort, onLoadMore = hubVm::loadMore,
-                    onOpenWork = openWork, onPlay = playOrOpen, modifier = content,
-                    onArtists = if (hub == Route.HUB_MUSIC) ({ navController.navigate(Route.Artists) }) else null,
-                )
-            }
-            composable<Route.Search> {
-                val searchState by searchVm.searchState.collectAsStateWithLifecycle()
-                val discoverState by searchVm.discoverState.collectAsStateWithLifecycle()
-                val acquireStates by searchVm.acquireStates.collectAsStateWithLifecycle()
-                SearchScreen(
-                    state = searchState, discover = discoverState, acquireStates = acquireStates, baseUrl = env.baseUrl,
-                    onSearch = searchVm::onSearch, onDiscover = searchVm::onDiscover,
-                    onGetOnce = searchVm::onGetOnce, onFollow = searchVm::onFollow, onFollowDiscovered = searchVm::onFollowDiscovered,
-                    onOpenWork = { navController.navigate(Route.WorkDetail(it.workId, it.title)) },
-                    onPlayEpisode = { ep -> ep.blobHash?.let { vm.playback.playFile("${ep.workTitle} — ${ep.title}", ep.assetId ?: ep.id, it, ep.mime, ep.contentType) } },
-                    onOpenEpisodeWork = { navController.navigate(Route.WorkDetail(it.workId, it.workTitle)) },
-                    onFollowing = { navController.navigate(Route.Following) },
-                    modifier = content,
-                )
-            }
-            composable<Route.Manage> {
-                LibraryScreen(
-                    state = libraryState, refreshing = libraryRefreshing, onRefresh = vm::refreshLibrary,
-                    onOpen = { navController.navigate(Route.WorkDetail(it.id, it.title, manage = true)) },
-                    onFollowing = { navController.navigate(Route.Following) },
-                    onWants = { navController.navigate(Route.Wants) },
-                    modifier = content,
-                )
-            }
-            composable<Route.WorkDetail> { entry ->
-                val route = entry.toRoute<Route.WorkDetail>()
-                val detailVm: WorkDetailViewModel = viewModel(
-                    key = "work:${route.id}:${env.key}",
-                    factory = viewModelFactory {
-                        initializer {
-                            WorkDetailViewModel(
-                                work = Work(id = route.id, title = route.title ?: route.id),
-                                library = LibraryClient(env.transport, env.baseUrl, env.credential),
-                                detail = WorkDetailClient(env.transport, env.baseUrl, env.credential),
-                                following = FollowingClient(env.transport, env.baseUrl, env.credential),
-                            )
-                        }
-                    },
-                )
-                val detail by detailVm.state.collectAsStateWithLifecycle()
-                val detailRefreshing by detailVm.refreshing.collectAsStateWithLifecycle()
-                WorkDetailScreen(
-                    state = detail, refreshing = detailRefreshing, authority = authority,
-                    onRefresh = detailVm::load, onBack = { navController.popBackStack() },
-                    onPlay = { work, asset ->
-                        if (MediaMime.isAudio(asset.mime, asset.filename)) listen(work, listOf(asset), 0)
-                        else { audio.stop(); vm.playback.playAsset(work, asset) }
-                    },
-                    // An episode plays under its own name ("Yellowstone — S04E01 Half the Money"), not the filename.
-                    onPlayEpisode = { work, ep ->
-                        ep.asset.blobHash?.let { hash ->
-                            audio.stop()
-                            vm.playback.playFile(Series.playTitle(work, ep), ep.asset.id, hash, ep.asset.mime ?: work.mime, work.kind)
-                        }
-                    },
-                    onCancelWant = detailVm::cancelWant, onSetMonitor = detailVm::setMonitor,
-                    onRetry = detailVm::retry, onSearchAgain = detailVm::searchAgain,
-                    onRemoveAsset = detailVm::removeAsset, onEditWork = detailVm::editWork,
-                    onDeleteWork = detailVm::deleteWork,
-                    // The work is gone: pop back and refresh so the row disappears.
-                    onWorkDeleted = { navController.popBackStack(); vm.refreshLibrary() },
-                    onOpenSource = { navController.navigate(Route.SourceDetail(it.id)) },
-                    onAuthorityRecheck = vm::loadSessionAuthority,
-                    modifier = content,
-                    posterUrl = (detail as? WorkDetailUiState.Loaded)?.work?.let { Artwork.posterUrl(env.baseUrl, it) },
-                    manageMode = route.manage,
-                    onOpenWant = { navController.navigate(Route.WantDetail(it.id)) },
-                )
-            }
-            composable<Route.Playlists> {
-                val plVm: PlaylistsViewModel = viewModel(
-                    key = "playlists:${env.key}",
-                    factory = viewModelFactory { initializer { PlaylistsViewModel(vm.personalState(env.baseUrl, env.credential)) } },
-                )
-                val plState by plVm.state.collectAsStateWithLifecycle()
-                PlaylistsScreen(
-                    state = plState,
-                    onOpen = { sid, name -> navController.navigate(Route.Playlist(sid, name)) },
-                    onCreate = { name -> plVm.create(name) { sid -> navController.navigate(Route.Playlist(sid, name)) } },
-                    onBack = { navController.popBackStack() },
-                )
-            }
-            composable<Route.Playlist> { entry ->
-                val r = entry.toRoute<Route.Playlist>()
-                val ps = vm.personalState(env.baseUrl, env.credential)
-                if (ps == null) {
-                    LaunchedEffect(Unit) { navController.popBackStack() }
-                } else {
-                    val plVm: PlaylistViewModel = viewModel(
-                        key = "playlist:${r.spaceId}:${env.key}",
-                        factory = viewModelFactory {
-                            initializer {
-                                PlaylistViewModel(r.spaceId, r.title, ps, LibraryClient(env.transport, env.baseUrl, env.credential))
-                            }
-                        },
-                    )
-                    val st by plVm.state.collectAsStateWithLifecycle()
-                    PlaylistScreen(
-                        state = st, onBack = { navController.popBackStack() },
-                        onPlayItem = { w -> personalActions.recordPlay(w.id); playOrOpen(w) },
-                        onPlayAll = playPlaylist,
-                        onOpenWork = openWork,
-                        onRemove = plVm::remove,
-                        onRename = plVm::rename,
-                    )
-                }
-            }
-            composable<Route.Wants> {
-                val wantsVm: WantsViewModel = viewModel(
-                    key = "wants:${env.key}",
-                    factory = viewModelFactory {
-                        initializer { WantsViewModel(WantsClient(env.transport, env.baseUrl, env.credential), LibraryClient(env.transport, env.baseUrl, env.credential)) }
-                    },
-                )
-                val wants by wantsVm.state.collectAsStateWithLifecycle()
-                WantsScreen(state = wants, onBack = { navController.popBackStack() }, onRefresh = wantsVm::load,
-                    onOpen = { navController.navigate(Route.WantDetail(it.id)) }, modifier = content)
-            }
-            composable<Route.WantDetail> { entry ->
-                val id = entry.toRoute<Route.WantDetail>().id
-                val wantVm: WantDetailViewModel = viewModel(
-                    key = "want:$id:${env.key}",
-                    factory = viewModelFactory {
-                        initializer {
-                            WantDetailViewModel(id, WantsClient(env.transport, env.baseUrl, env.credential),
-                                WorkDetailClient(env.transport, env.baseUrl, env.credential), LibraryClient(env.transport, env.baseUrl, env.credential))
-                        }
-                    },
-                )
-                val want by wantVm.state.collectAsStateWithLifecycle()
-                WantDetailScreen(
-                    state = want, canWrite = authority?.canWrite == true,
-                    onBack = { navController.popBackStack() }, onRefresh = wantVm::load,
-                    onSelect = wantVm::select, onSearchAgain = wantVm::searchAgain, onRetry = wantVm::retry,
-                    onSetMonitor = wantVm::setMonitor, onCancel = wantVm::cancel,
-                    onOpenWork = { navController.navigate(Route.WorkDetail(it)) },
-                    modifier = content,
-                )
-            }
-            composable<Route.Artists> {
-                val artistsVm: ArtistsViewModel = viewModel(
-                    key = "artists:${env.key}",
-                    factory = viewModelFactory { initializer { ArtistsViewModel(MusicClient(env.transport, env.baseUrl, env.credential)) } },
-                )
-                val artists by artistsVm.state.collectAsStateWithLifecycle()
-                ArtistsScreen(state = artists, baseUrl = env.baseUrl, onBack = { navController.popBackStack() },
-                    onOpen = { navController.navigate(Route.Artist(it.name)) }, modifier = content)
-            }
-            composable<Route.Artist> { entry ->
-                val name = entry.toRoute<Route.Artist>().name
-                val artistVm: ArtistViewModel = viewModel(
-                    key = "artist:$name:${env.key}",
-                    factory = viewModelFactory { initializer { ArtistViewModel(name, MusicClient(env.transport, env.baseUrl, env.credential)) } },
-                )
-                val albums by artistVm.state.collectAsStateWithLifecycle()
-                ArtistScreen(artist = name, state = albums, baseUrl = env.baseUrl, onBack = { navController.popBackStack() },
-                    onOpenAlbum = { navController.navigate(Route.Album(it.id, it.title)) }, modifier = content)
-            }
-            composable<Route.Album> { entry ->
-                val route = entry.toRoute<Route.Album>()
-                val albumVm: AlbumViewModel = viewModel(
-                    key = "album:${route.workId}:${env.key}",
-                    factory = viewModelFactory {
-                        initializer {
-                            AlbumViewModel(route.workId, route.title,
-                                LibraryClient(env.transport, env.baseUrl, env.credential), WorkDetailClient(env.transport, env.baseUrl, env.credential))
-                        }
-                    },
-                )
-                val album by albumVm.state.collectAsStateWithLifecycle()
-                AlbumScreen(
-                    state = album, baseUrl = env.baseUrl, nowPlayingAssetId = audioState.item?.assetId,
-                    onBack = { navController.popBackStack() },
-                    onPlayAll = { album.work?.let { listen(it, album.tracks, 0) } },
-                    onPlayTrack = { i -> album.work?.let { listen(it, album.tracks, i) } },
-                    onOpenWork = { navController.navigate(Route.WorkDetail(route.workId, route.title)) },
-                    modifier = content,
-                )
-            }
-            composable<Route.Reader> { entry ->
-                val route = entry.toRoute<Route.Reader>()
-                val readerVm: WorkDetailViewModel = viewModel(
-                    key = "reader:${route.workId}:${env.key}",
-                    factory = viewModelFactory {
-                        initializer {
-                            WorkDetailViewModel(
-                                work = Work(id = route.workId, title = route.title ?: route.workId, kind = "book"),
-                                library = LibraryClient(env.transport, env.baseUrl, env.credential),
-                                detail = WorkDetailClient(env.transport, env.baseUrl, env.credential),
-                                following = null,
-                            )
-                        }
-                    },
-                )
-                val book by readerVm.state.collectAsStateWithLifecycle()
-                ReaderEntryScreen(
-                    state = book, baseUrl = env.baseUrl, onBack = { navController.popBackStack() },
-                    onListen = { asset -> (book as? WorkDetailUiState.Loaded)?.let { listen(it.work, listOf(asset), 0) } },
-                    onOpenWork = { navController.navigate(Route.WorkDetail(route.workId, route.title)) },
-                    onRead = { asset ->
-                        asset.blobHash?.let { hash ->
-                            audio.stop()
-                            context.startActivity(ReaderActivity.intent(context, asset.id, PlaybackClient.blobContentUrl(env.baseUrl, hash), route.title ?: asset.filename ?: ""))
-                        }
-                    },
-                    modifier = content,
-                )
-            }
-            composable<Route.Following> {
-                val followingState by searchVm.followingState.collectAsStateWithLifecycle()
-                val unfollowErrors by searchVm.unfollowErrors.collectAsStateWithLifecycle()
-                val searchAuthority by searchVm.authority.collectAsStateWithLifecycle()
-                FollowingScreen(
-                    state = followingState, unfollowErrors = unfollowErrors, authority = searchAuthority,
-                    onLoad = searchVm::loadFollowing, onAuthorityRecheck = searchVm::loadAuthority,
-                    onUnfollow = searchVm::onUnfollow,
-                    onOpen = { navController.navigate(Route.SourceDetail(it.id)) },
-                    modifier = content,
-                )
-            }
-            composable<Route.SourceDetail> { entry ->
-                val id = entry.toRoute<Route.SourceDetail>().id
-                LaunchedEffect(id) { searchVm.openSource(id) }
-                val detail by searchVm.sourceDetail.collectAsStateWithLifecycle()
-                val detailRefreshing by searchVm.sourceDetailRefreshing.collectAsStateWithLifecycle()
-                val searchAuthority by searchVm.authority.collectAsStateWithLifecycle()
-                val current = detail
-                if (current == null) {
-                    Text("Loading…", modifier = content.padding(16.dp))
-                } else {
-                    FollowedSourceDetailScreen(
-                        state = current, refreshing = detailRefreshing, authority = searchAuthority,
-                        onRefresh = searchVm::reloadSource,
-                        onBack = { searchVm.closeSource(); navController.popBackStack() },
-                        onUnfollow = searchVm::unfollowFromDetail,
-                        onAuthorityRecheck = searchVm::loadAuthority,
-                        modifier = content,
-                    )
-                }
-            }
-            composable<Route.Device> {
-                EnrolScreen(
-                    state = enrolState,
-                    onCreateKey = vm::provisionDevice, onJoinInvite = vm::joinPairing,
-                    onSasMatches = vm::confirmSas, onSasMismatch = vm::rejectSas,
-                    onRetry = vm::retryEnrol, onForget = vm::forgetDevice,
-                    onDone = { vm.useDeviceCredential(); navController.navigateTab(Route.Home) },
-                    modifier = content,
-                    parkedInvite = parkedInvite, onDiscardParked = vm::discardParkedInvite,
-                    onCancelPairing = vm::cancelPairing, onRegister = vm::registerDevice,
-                )
-            }
-            composable<Route.Player> {
-                val playing = nowPlaying
-                when (Decisions.playerContent(playing, audioState.item)) {
-                    Decisions.PlayerContent.AUDIO -> NowPlayingScreen(
-                        state = audioState, onBack = { navController.popBackStack() },
-                        onTogglePlay = audio::togglePlayPause, onNext = audio::next, onPrevious = audio::previous,
-                        onSeek = audio::seekTo, onSkipTo = audio::skipTo,
-                        onStop = { audio.stop(); navController.popBackStack() },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    // Nothing to show: the item was stopped (or never existed). Leave.
-                    Decisions.PlayerContent.NONE -> LaunchedEffect(Unit) { navController.popBackStack() }
-                    Decisions.PlayerContent.VIDEO -> PlayerScreen(
-                        target = playing!!.target, title = playing.title,
-                        onBack = { vm.playback.stop(); navController.popBackStack() },
-                        banner = playing.banner, onIssue = vm.playback::onIssue,
-                        client = httpClient, modifier = Modifier.fillMaxSize(),
-                        startSeconds = playing.startSeconds,
-                        onProgress = { p ->
-                            when (p.event) {
-                                PlaybackProgress.Event.TICK -> vm.playback.reportProgress(p.seconds)
-                                PlaybackProgress.Event.PAUSED -> vm.playback.reportPause(p.seconds)
-                                PlaybackProgress.Event.RESUMED -> vm.playback.reportResume(p.seconds)
-                                PlaybackProgress.Event.ENDED -> vm.playback.reportEnded(p.seconds, completed = true)
-                                PlaybackProgress.Event.LEFT -> vm.playback.reportEnded(p.seconds, completed = false)
-                            }
-                        },
-                    )
-                }
-            }
-        }
-
-        // The add-to-playlist picker overlays whatever screen fired it (a card ⋯ menu,
-        // a work header). Its target lives in the shared actions VM, so it survives a
-        // navigation and reads the same playlist list Home does.
-        addTarget?.let {
-            AddToPlaylistDialog(
-                playlists = playlistsForAdd,
-                onPick = { sid -> personalActions.addTargetTo(sid) },
-                onCreateNew = { name -> personalActions.createPlaylistWithTarget(name) },
-                onDismiss = { personalActions.dismissAddToPlaylist() },
+        },
+    )
+    /** Play a playlist (its playable works) as an audio queue. */
+    val playPlaylist: (List<Work>) -> Unit = { works ->
+        val items = works.filter { !it.blobHash.isNullOrBlank() }.map { w ->
+            one.rarebit.heyarr.mobile.playback.AudioItem(
+                assetId = w.primaryAssetId ?: w.id, workId = w.id, title = w.title, artist = w.artist, album = null,
+                artworkUrl = one.rarebit.heyarr.mobile.catalog.Artwork.posterUrl(env.baseUrl, w),
+                contentUrl = PlaybackClient.blobContentUrl(env.baseUrl, w.blobHash!!), mime = w.mime,
             )
+        }
+        if (items.isNotEmpty()) { vm.playback.stop(); openPlayerOnAudio = true; audio.playQueue(items, 0) }
+    }
+    fun go(section: one.rarebit.heyarr.mobile.ui.components.NavSection) = navController.navigateTab(Decisions.routeOf(section))
+    fun open(route: Route) = navController.navigate(route)
+    fun back() { navController.popBackStack() }
+    val deviceSummary = when (enrolState) {
+        is EnrolUiState.Enrolled -> "This phone is enrolled as a device and signs in with its own key."
+        is EnrolUiState.Ready -> "A device key exists; this phone is not enrolled yet."
+        is EnrolUiState.Unprovisioned -> "No device key yet — a QR session signs this phone in."
+        else -> null
+    }
+
+    CompositionLocalProvider(LocalAppearance provides session.appearance) {
+        HeyarrTheme(shellTheme) {
+            BoxWithConstraints(Modifier.fillMaxSize().background(Tokens.bgBase)) {
+                val wide = maxWidth >= Tokens.railBreakpoint
+                Row(Modifier.fillMaxSize()) {
+                    if (wide && !fullScreen) HeyarrNavRail(
+                        currentSection, onGo = ::go, connection = session.connection,
+                        connectionDetail = session.lastLatencyMs?.let { "$it ms" },
+                        onConnection = { open(Route.Telemetry) },
+                    )
+                    Column(Modifier.fillMaxSize()) {
+                        if (!fullScreen) Box(Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
+                            when (session.connection) {
+                                Connection.OFFLINE -> OfflineBanner("Can't reach heyarr", session.baseUrl, onRetry = { scope.launch { session.probe() } }, onSettings = { go(one.rarebit.heyarr.mobile.ui.components.NavSection.SETTINGS) })
+                                Connection.UNAUTHORIZED -> OfflineBanner("heyarr refused the credential", "Sign in again, or re-check this device's authorisation in Settings.", onRetry = { scope.launch { session.probe() } }, onSettings = { go(one.rarebit.heyarr.mobile.ui.components.NavSection.SETTINGS) })
+                                else -> {}
+                            }
+                        }
+                        Box(Modifier.weight(1f)) {
+                            val content = Modifier.fillMaxSize()
+                            NavHost(navController = navController, startDestination = Route.Home) {
+                                composable<Route.Home> { HomeScreen(session, holder.home, ::open, onWant, onPlayContinue = { e -> e.blobHash?.let { vm.playback.playFile(e.workTitle + (e.subtitle?.let { s -> " — $s" } ?: ""), e.assetId, it, e.mime, e.contentType, startSeconds = e.positionSeconds, artworkUrl = e.artworkPath?.let { p -> one.rarebit.heyarr.mobile.heyarr.HeyarrApi.blobUrlFromPath(env.baseUrl, p) }) } }, modifier = content, personal = personalRows) }
+                                composable<Route.Discover> { HomeScreen(session, holder.home, ::open, onWant, onPlayContinue = { e -> e.blobHash?.let { vm.playback.playFile(e.workTitle, e.assetId, it, e.mime, e.contentType, startSeconds = e.positionSeconds) } }, modifier = content, discover = true, personal = personalRows) }
+                                composable<Route.Search> {
+                                    SearchScreen(session, holder.search, ::open, onWant, onPlayEpisode = { ep -> ep.blobHash?.let { vm.playback.playFile("${ep.workTitle ?: ""} — ${ep.title}".trimStart(' ', '—'), ep.assetId ?: ep.id, it, ep.mime, ep.contentType ?: "series") } }, modifier = content)
+                                }
+                                composable<Route.Library> { LibraryScreen(session, holder.library, ::open, onWant, modifier = content, onPlaylists = if (personalActions.enabled) ({ open(Route.Playlists) }) else null) }
+                                composable<Route.Missing> { MissingScreen(session, holder.missing, ::open, onWantTitle = { want = WantRequest(null, "") }, modifier = content) }
+                                composable<Route.Cast> { CastScreen(session, holder.cast, modifier = content) }
+                                composable<Route.Settings> {
+                                    SettingsScreen(
+                                        session, holder.settings, config, authority,
+                                        onSaveConnection = vm::updateSettings, onResetConnection = vm::resetSettings, onSignOut = vm::signOut,
+                                        onTelemetry = { open(Route.Telemetry) }, onDevice = { open(Route.Device) },
+                                        onSourcesChanged = { holder.search.invalidateSources() }, modifier = content, deviceSummary = deviceSummary,
+                                    )
+                                }
+                                composable<Route.Telemetry> {
+                                    TelemetryScreen(session, holder.telemetry, credentialSummary = credential.javaClass.simpleName.lowercase() + " credential, re-stamped per request", onBack = ::back, modifier = content)
+                                }
+                                composable<Route.Device> {
+                                    EnrolScreen(
+                                        state = enrolState,
+                                        onCreateKey = vm::provisionDevice, onJoinInvite = vm::joinPairing,
+                                        onSasMatches = vm::confirmSas, onSasMismatch = vm::rejectSas,
+                                        onRetry = vm::retryEnrol, onForget = vm::forgetDevice,
+                                        onDone = { vm.useDeviceCredential(); navController.navigateTab(Route.Home) },
+                                        modifier = content.padding(horizontal = Tokens.screenPadding),
+                                        parkedInvite = parkedInvite, onDiscardParked = vm::discardParkedInvite,
+                                        onCancelPairing = vm::cancelPairing, onRegister = vm::registerDevice,
+                                    )
+                                }
+                                composable<Route.Detail> { entry ->
+                                    val route = entry.toRoute<Route.Detail>()
+                                    DetailScreen(session, route, holder.detail(route.workId), play, onBack = ::back, onOpen = ::open, onWant = onWant, modifier = content)
+                                }
+                                composable<Route.Playlists> {
+                                    val plVm: PlaylistsViewModel = viewModel(key = "playlists:${env.key}", factory = viewModelFactory { initializer { PlaylistsViewModel(vm.personalState(env.baseUrl, env.credential)) } })
+                                    val plState by plVm.state.collectAsStateWithLifecycle()
+                                    PlaylistsScreen(state = plState, onOpen = { sid, name -> open(Route.Playlist(sid, name)) }, onCreate = { name -> plVm.create(name) { sid -> open(Route.Playlist(sid, name)) } }, onBack = ::back, modifier = content)
+                                }
+                                composable<Route.Playlist> { entry ->
+                                    val r = entry.toRoute<Route.Playlist>()
+                                    val ps = vm.personalState(env.baseUrl, env.credential)
+                                    if (ps == null) {
+                                        LaunchedEffect(Unit) { back() }
+                                    } else {
+                                        val plVm: PlaylistViewModel = viewModel(key = "playlist:${r.spaceId}:${env.key}", factory = viewModelFactory { initializer { PlaylistViewModel(r.spaceId, r.title, ps, LibraryClient(env.transport, env.baseUrl, env.credential)) } })
+                                        val st by plVm.state.collectAsStateWithLifecycle()
+                                        PlaylistScreen(
+                                            state = st, onBack = ::back,
+                                            onPlayAll = playPlaylist,
+                                            onOpenWork = { w -> open(detailRoute(w.id, MediaType.from(w.kind), w.title, from = "Library")) },
+                                            onRemove = plVm::remove, onRename = plVm::rename, modifier = content,
+                                        )
+                                    }
+                                }
+                                composable<Route.Player> {
+                                    when (Decisions.playerContent(nowPlaying, audioState.item)) {
+                                        Decisions.PlayerContent.VIDEO -> PlayerScreen(
+                                            session, video, holder.player, onBack = ::back,
+                                            onNext = { e -> vm.playback.playFile(e.title, e.assetId, e.blobHash, e.mime, e.kind, artworkUrl = video.current?.artworkUrl) },
+                                            onStop = { vm.playback.stop(); back() }, modifier = content,
+                                        )
+                                        Decisions.PlayerContent.AUDIO -> AudioQueueScreen(
+                                            state = audioState, onBack = ::back,
+                                            onTogglePlay = audio::togglePlayPause, onNext = audio::next, onPrevious = audio::previous,
+                                            onSeek = audio::seekTo, onSkipTo = audio::skipTo,
+                                            onStop = { audio.stop(); back() }, modifier = content,
+                                        )
+                                        Decisions.PlayerContent.NONE -> LaunchedEffect(Unit) { back() }
+                                    }
+                                }
+                            }
+                        }
+                        if (Decisions.showNowPlayingBar(fullScreen, video.active, audioState.item)) NowPlayingBar(
+                            video = video, audio = audioState,
+                            onOpen = { navController.navigate(Route.Player) { launchSingleTop = true } },
+                            onAudioToggle = audio::togglePlayPause, onAudioNext = audio::next, onAudioSeek = audio::seekTo, onAudioStop = audio::stop,
+                            onVideoNext = video.next()?.let { e -> { vm.playback.playFile(e.title, e.assetId, e.blobHash, e.mime, e.kind, artworkUrl = video.current?.artworkUrl) } },
+                        )
+                        if (!wide && !fullScreen) HeyarrBottomBar(currentSection, onGo = ::go)
+                    }
+                }
+                Column(Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp).padding(bottom = if (fullScreen) 16.dp else if (wide) 24.dp else 96.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (t in session.toasts.takeLast(3)) ToastCard(t, onDismiss = { session.dismiss(t) })
+                }
+                want?.let { req -> WantSheet(session, req, onClose = { want = null }) }
+                addTarget?.let {
+                    AddToPlaylistDialog(
+                        playlists = playlistsForAdd,
+                        onPick = { sid -> personalActions.addTargetTo(sid) },
+                        onCreateNew = { name -> personalActions.createPlaylistWithTarget(name) },
+                        onDismiss = { personalActions.dismissAddToPlaylist() },
+                    )
+                }
+            }
         }
     }
 }

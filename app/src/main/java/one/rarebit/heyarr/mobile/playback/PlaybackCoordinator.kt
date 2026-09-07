@@ -29,6 +29,10 @@ data class NowPlaying(
     val startSeconds: Double = 0.0,
     /** `watch` | `listen` — what the consumption session records. */
     val verb: String = "watch",
+    /** The work's kind (`movie`, `series`, `music`…), so the player and the bar skin themselves. */
+    val kind: String? = null,
+    /** The work's poster, for the now-playing bar. */
+    val artworkUrl: String? = null,
 )
 
 /**
@@ -82,10 +86,10 @@ class PlaybackCoordinator(
         val caps = capabilities
         val assetId = work.primaryAssetId
         if (caps == null || assetId == null) {
-            present(NowPlaying(target = client.blobTarget(hash, isVideo, work.mime), title = work.title, assetId = assetId, blobHash = hash, verb = verbFor(isVideo)))
+            present(NowPlaying(target = client.blobTarget(hash, isVideo, work.mime), title = work.title, assetId = assetId, blobHash = hash, verb = verbFor(isVideo), kind = work.kind))
             return
         }
-        resolveInto(client, assetId, hash, isVideo, work.mime, work.title, caps)
+        resolveInto(client, assetId, hash, isVideo, work.mime, work.title, caps, kind = work.kind)
     }
 
     /** Play one of a work's files: the asset's own blob hash and MIME drive the target. */
@@ -102,10 +106,10 @@ class PlaybackCoordinator(
         val client = PlaybackClient(transport, baseUrl(), cred)
         val caps = capabilities
         if (caps == null) {
-            present(NowPlaying(target = client.blobTarget(hash, isVideo, mime), title = title, assetId = asset.id, blobHash = hash, verb = verbFor(isVideo)))
+            present(NowPlaying(target = client.blobTarget(hash, isVideo, mime), title = title, assetId = asset.id, blobHash = hash, verb = verbFor(isVideo), kind = work.kind))
             return
         }
-        resolveInto(client, asset.id, hash, isVideo, mime, title, caps)
+        resolveInto(client, asset.id, hash, isVideo, mime, title, caps, kind = work.kind)
     }
 
     /**
@@ -113,16 +117,16 @@ class PlaybackCoordinator(
      * continue card. Same plan/fallback path as [playAsset]; [kind] steers video-vs-audio
      * when the MIME does not.
      */
-    fun playFile(title: String, assetId: String, blobHash: String, mime: String?, kind: String?, startSeconds: Double? = null) {
+    fun playFile(title: String, assetId: String, blobHash: String, mime: String?, kind: String?, startSeconds: Double? = null, artworkUrl: String? = null) {
         val cred = credential() ?: return
         val isVideo = PlaybackTarget.looksLikeVideo(mime, kind)
         val client = PlaybackClient(transport, baseUrl(), cred)
         val caps = capabilities
         if (caps == null) {
-            present(NowPlaying(target = client.blobTarget(blobHash, isVideo, mime), title = title, assetId = assetId, blobHash = blobHash, verb = verbFor(isVideo)), startSeconds)
+            present(NowPlaying(target = client.blobTarget(blobHash, isVideo, mime), title = title, assetId = assetId, blobHash = blobHash, verb = verbFor(isVideo), kind = kind, artworkUrl = artworkUrl), startSeconds)
             return
         }
-        resolveInto(client, assetId, blobHash, isVideo, mime, title, caps, startSeconds)
+        resolveInto(client, assetId, blobHash, isVideo, mime, title, caps, startSeconds, kind = kind, artworkUrl = artworkUrl)
     }
 
     /**
@@ -145,7 +149,7 @@ class PlaybackCoordinator(
     fun reportResume(seconds: Double) = reporter.resume(seconds)
     fun reportEnded(seconds: Double, completed: Boolean) = reporter.end(seconds, completed)
 
-    private fun resolveInto(client: PlaybackClient, assetId: String, hash: String, isVideo: Boolean, mime: String?, title: String, caps: ClientCapabilities, knownStart: Double? = null) {
+    private fun resolveInto(client: PlaybackClient, assetId: String, hash: String, isVideo: Boolean, mime: String?, title: String, caps: ClientCapabilities, knownStart: Double? = null, kind: String? = null, artworkUrl: String? = null) {
         // Plan first: the node may repackage for this phone. A node that predates the
         // contract answers 400 and `resolve` falls back to the blob.
         scope.launch {
@@ -153,7 +157,7 @@ class PlaybackCoordinator(
                 runCatching { client.resolve(assetId, hash, isVideo, mime, caps) }
                     .getOrElse { client.blobTarget(hash, isVideo, mime).copy(reason = it.message) }
             }
-            present(NowPlaying(target = target, title = title, assetId = assetId, blobHash = hash, verb = verbFor(isVideo)), knownStart)
+            present(NowPlaying(target = target, title = title, assetId = assetId, blobHash = hash, verb = verbFor(isVideo), kind = kind, artworkUrl = artworkUrl), knownStart)
         }
     }
 

@@ -2,7 +2,7 @@ package one.rarebit.heyarr.mobile
 
 import one.rarebit.heyarr.mobile.library.Work
 import one.rarebit.heyarr.mobile.library.WorkAsset
-import one.rarebit.heyarr.mobile.music.AlbumViewModel
+import one.rarebit.heyarr.mobile.music.Tracks
 import one.rarebit.heyarr.mobile.music.MusicClient
 import one.rarebit.heyarr.mobile.music.MusicJson
 import one.rarebit.heyarr.mobile.music.trackTitle
@@ -52,7 +52,7 @@ class MusicJsonTest {
             WorkAsset(id = "a4", editionId = "e", filename = "03 - Gone.flac", mime = "audio/flac", blobHash = "blake3:4", missingSince = "2026-01-01T00:00:00Z"),
             WorkAsset(id = "a5", editionId = "e", filename = "linked.mp3", mime = "audio/mpeg", blobHash = null),
         )
-        assertEquals(listOf("a1", "a2"), AlbumViewModel.tracksOf(assets).map { it.id })
+        assertEquals(listOf("a1", "a2"), Tracks.playable(assets).map { it.id })
     }
 
     @Test fun trackTitleDropsTheNumberAndExtension() {
