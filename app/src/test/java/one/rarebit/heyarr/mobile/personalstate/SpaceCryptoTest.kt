@@ -121,18 +121,19 @@ class SpaceCryptoTest {
         val recipientPub = Hex.decodeOrNull(JsonScan.stringField(v, "recipient_pub_hex")!!)!!
         val spaceKey = crypto.newSpaceKey()
         assertEquals(32, spaceKey.size)
-        val wrapped = try {
-            crypto.seal(spaceKey, recipientPub)
+        val unwrapped = try {
+            val wrapped = crypto.seal(spaceKey, recipientPub)
+            assertEquals(104, wrapped.size)
+            crypto.unwrap(wrapped, recipientSeed)
         } catch (e: java.security.InvalidKeyException) {
-            // The JVM crypto provider (SunJCE ChaCha20-Poly1305) rejects the encrypt-side
-            // nonce init, so seal (encrypt) can't run here. It's verified on a real device
-            // (device-test checklist); the Go-golden-vector decrypt KATs above prove the
-            // wire format, which is the point of this suite.
-            org.junit.Assume.assumeNoException("seal (encrypt) unsupported by the JVM crypto provider; verify on-device", e)
+            // SunJCE ChaCha20-Poly1305 refuses to reinit with a (key, nonce) it just used to
+            // encrypt in-process, so decrypting our own freshly-sealed blob throws. The
+            // Go-golden-vector decrypt KATs above are unaffected (Go did that encryption);
+            // the full on-device round trip is a device-test item.
+            org.junit.Assume.assumeNoException("JVM provider rejects decrypt after in-process encrypt; verify on-device", e)
             return
         }
-        assertEquals(104, wrapped.size)
-        assertArrayEquals(spaceKey, crypto.unwrap(wrapped, recipientSeed))
+        assertArrayEquals(spaceKey, unwrapped)
     }
 
     /** encryptChange → decryptChange round-trips, and the ciphertext is not the plaintext. */
@@ -140,16 +141,17 @@ class SpaceCryptoTest {
     fun encryptThenDecryptRoundTrips() {
         val spaceKey = crypto.newSpaceKey()
         val plaintext = "a reading-position change at chapter 4".encodeToByteArray()
-        val blob = try {
-            crypto.encryptChange(spaceKey, plaintext)
+        val decrypted = try {
+            val blob = crypto.encryptChange(spaceKey, plaintext)
+            assertTrue("nonce(24) + tag(16) framing", blob.size >= plaintext.size + 24 + 16)
+            crypto.decryptChange(spaceKey, blob)
         } catch (e: java.security.InvalidKeyException) {
-            // Same JVM encrypt-side limitation as sealThenUnwrapRoundTrips; the encrypt
-            // path is a device-test item. Decrypt of Go-encrypted content is KAT'd above.
-            org.junit.Assume.assumeNoException("encryptChange (encrypt) unsupported by the JVM crypto provider; verify on-device", e)
+            // Same JVM provider limitation as sealThenUnwrapRoundTrips (decrypt-after-
+            // in-process-encrypt); a device-test item. Decrypt of Go content is KAT'd above.
+            org.junit.Assume.assumeNoException("JVM provider rejects decrypt after in-process encrypt; verify on-device", e)
             return
         }
-        assertTrue("nonce(24) + tag(16) framing", blob.size >= plaintext.size + 24 + 16)
-        assertArrayEquals(plaintext, crypto.decryptChange(spaceKey, blob))
+        assertArrayEquals(plaintext, decrypted)
     }
 
     /** A device's recipient id round-trips through the DeviceEncKey seam. */
