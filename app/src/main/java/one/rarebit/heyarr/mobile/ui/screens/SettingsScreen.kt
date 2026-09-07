@@ -229,9 +229,9 @@ private fun AppearancePanel(session: AppSession) {
     val ap = session.appearance
     Panel("Appearance") {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip("Media-adaptive accents", ap.adaptiveAccents, { session.setAppearance(ap.copy(adaptiveAccents = !ap.adaptiveAccents)) })
-            FilterChip("Reduce motion", ap.reduceMotion, { session.setAppearance(ap.copy(reduceMotion = !ap.reduceMotion)) })
-            FilterChip("Public cover art & synopses", session.externalMetadata, { session.setExternalMetadata(!session.externalMetadata) })
+            FilterChip("Media-adaptive accents", ap.adaptiveAccents, { session.updateAppearance(ap.copy(adaptiveAccents = !ap.adaptiveAccents)) })
+            FilterChip("Reduce motion", ap.reduceMotion, { session.updateAppearance(ap.copy(reduceMotion = !ap.reduceMotion)) })
+            FilterChip("Public cover art & synopses", session.externalMetadata, { session.updateExternalMetadata(!session.externalMetadata) })
         }
         Text("Where the node holds no artwork, covers and synopses come from keyless public sources — TVmaze (series, with episode lists), Wikipedia (films), Open Library (books), Apple Podcasts, Cover Art Archive (music) and a feed's own image or site icon. Titles are sent to those services over a bare connection (never your credential); each answer is cached for a week in the app's cache. Everything external is labelled as such.", style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted)
         Text("The accent follows the media in focus: emerald for film, violet for series, amber for books, teal for audiobooks, magenta for podcasts, rose for music. Surfaces and text never change.", style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted)

@@ -59,13 +59,13 @@ class AppSession(
     var externalMetadata: Boolean by mutableStateOf(settings.externalMetadata)
         private set
 
-    fun setAppearance(next: Appearance) {
+    fun updateAppearance(next: Appearance) {
         settings.adaptiveAccents = next.adaptiveAccents
         settings.reduceMotion = next.reduceMotion
         appearance = next
     }
 
-    fun setExternalMetadata(on: Boolean) {
+    fun updateExternalMetadata(on: Boolean) {
         settings.externalMetadata = on
         externalMetadata = on
     }
