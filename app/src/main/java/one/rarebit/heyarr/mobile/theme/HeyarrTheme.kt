@@ -1,6 +1,7 @@
 package one.rarebit.heyarr.mobile.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -125,7 +126,11 @@ fun HeyarrTheme(media: MediaTheme = MediaThemes.default, content: @Composable ()
         scrim = Tokens.bgBase,
     )
     CompositionLocalProvider(LocalMediaTheme provides media) {
-        MaterialTheme(colorScheme = scheme, typography = HeyarrTypography, shapes = HeyarrShapes, content = content)
+        MaterialTheme(colorScheme = scheme, typography = HeyarrTypography, shapes = HeyarrShapes) {
+            // No Material Surface wraps the app, so pin the default text colour ourselves —
+            // otherwise unstyled Text (the sign-in screen) inherits Compose's black.
+            CompositionLocalProvider(LocalContentColor provides Tokens.textPrimary, content = content)
+        }
     }
 }
 
