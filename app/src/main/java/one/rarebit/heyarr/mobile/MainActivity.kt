@@ -199,7 +199,7 @@ class MainActivity : FragmentActivity() {
                             // Enrolment needs no session: pairing runs over the relay, and an enrolled
                             // phone then signs in with its cert instead of a QR login.
                             BackHandler { showEnrol = false }
-                            PreLoginScreen(subtitle = config.baseUrl, onSettings = null) {
+                            PreLoginScreen(subtitle = config.baseUrl, onSettings = null, scroll = false) {
                                 EnrolScreen(
                                     state = enrolState,
                                     onCreateKey = vm::provisionDevice,
@@ -243,8 +243,23 @@ class MainActivity : FragmentActivity() {
 
 /** The pre-sign-in frame: a wordmark, the node we point at, and a gear for the connection settings. */
 @Composable
-private fun PreLoginScreen(subtitle: String, onSettings: (() -> Unit)?, content: @Composable () -> Unit) {
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).verticalScroll(rememberScrollState()).padding(horizontal = Tokens.screenPadding, vertical = Tokens.s3), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+private fun PreLoginScreen(
+    subtitle: String,
+    onSettings: (() -> Unit)?,
+    /**
+     * Whether the frame scrolls its content. False for content that scrolls itself
+     * (EnrolScreen): a vertically scrolling column inside another one is measured with
+     * an infinite height and Compose throws, which killed the app the moment Cruciform
+     * handed over an invite. Such content gets the remaining height instead.
+     */
+    scroll: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    val frame = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)
+    Column(
+        (if (scroll) frame.verticalScroll(rememberScrollState()) else frame).padding(horizontal = Tokens.screenPadding, vertical = Tokens.s3),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("heyarr", style = MaterialTheme.typography.headlineMedium, color = Tokens.textPrimary)
@@ -252,7 +267,11 @@ private fun PreLoginScreen(subtitle: String, onSettings: (() -> Unit)?, content:
             }
             if (onSettings != null) IconButtonRound(Icons.Rounded.Settings, "Connection settings", onSettings, size = 40.dp)
         }
-        content()
-        Spacer(Modifier.padding(8.dp))
+        if (scroll) {
+            content()
+            Spacer(Modifier.padding(8.dp))
+        } else {
+            Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+        }
     }
 }
