@@ -31,7 +31,20 @@ sealed interface PairDeepLink {
      * sealed over the relay and this app's own pipeline is what verified and stored it,
      * so the link is a navigation hint, never evidence that anything succeeded.
      */
-    data class Done(val session: String?) : PairDeepLink
+    data class Done(
+        val session: String?,
+        /**
+         * `outcome=refused`: Cruciform compared this phone's one-tap report against the
+         * relay reveal and they disagreed, so it signed nothing. [reason] is its wording,
+         * verbatim. Still a navigation hint, not evidence — the pairing here is failed on
+         * the strength of the relay session never producing an admission; this only says
+         * so now instead of at the session's expiry.
+         */
+        val outcome: String? = null,
+        val reason: String? = null,
+    ) : PairDeepLink {
+        val refused: Boolean get() = outcome == OUTCOME_REFUSED
+    }
 
     companion object {
         const val ACTION_VIEW = "android.intent.action.VIEW"
@@ -40,6 +53,9 @@ sealed interface PairDeepLink {
         const val DONE_HOST = "pair-done"
         const val PARAM = "invite"
         const val PARAM_SESSION = "session"
+        const val PARAM_OUTCOME = "outcome"
+        const val PARAM_REASON = "reason"
+        const val OUTCOME_REFUSED = "refused"
 
         private const val PREFIX = "$SCHEME://$HOST"
         private const val DONE_PREFIX = "$SCHEME://$DONE_HOST"
@@ -59,9 +75,10 @@ sealed interface PairDeepLink {
                 val rest = uri.substring(DONE_PREFIX.length)
                 if (rest.isNotEmpty() && rest[0] != '?' && rest[0] != '/') return null
                 val q = rest.indexOf('?')
-                val session = if (q < 0) null else queryParam(rest.substring(q + 1), PARAM_SESSION)
-                    ?.let { runCatching { percentDecode(it) }.getOrNull() }
-                return Done(session?.takeIf { it.isNotEmpty() })
+                val query = if (q < 0) "" else rest.substring(q + 1)
+                fun decoded(key: String): String? = queryParam(query, key)
+                    ?.let { runCatching { percentDecode(it) }.getOrNull() }?.takeIf { it.isNotEmpty() }
+                return Done(decoded(PARAM_SESSION), decoded(PARAM_OUTCOME), decoded(PARAM_REASON))
             }
             if (!uri.startsWith(PREFIX)) return null
             val rest = uri.substring(PREFIX.length)

@@ -28,6 +28,16 @@ class PairDeepLinkTest {
 
     private val link = "heyarr-mobile://pair?invite=${encode(invite)}"
 
+    @Test fun `the return leg reads a refusal with Cruciform's wording, and is plain done otherwise`() {
+        val refused = PairDeepLink.route(PairDeepLink.ACTION_VIEW, "heyarr-mobile://pair-done?session=abc123&outcome=refused&reason=the%20SAS%20differed%3A%20%3D") as PairDeepLink.Done
+        assertEquals("abc123", refused.session)
+        assertTrue(refused.refused)
+        assertEquals("the SAS differed: =", refused.reason)
+        val done = PairDeepLink.route(PairDeepLink.ACTION_VIEW, "heyarr-mobile://pair-done?session=abc123") as PairDeepLink.Done
+        assertEquals(PairDeepLink.Done("abc123"), done)
+        assertTrue(!done.refused)
+    }
+
     @Test fun `a Cruciform link yields the byte-identical invite`() {
         val r = PairDeepLink.route(PairDeepLink.ACTION_VIEW, link)
         assertEquals(PairDeepLink.Invite(invite), r)

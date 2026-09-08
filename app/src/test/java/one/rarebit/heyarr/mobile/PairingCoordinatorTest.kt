@@ -147,6 +147,22 @@ class PairingCoordinatorTest {
         assertNull("the admission is on disk — nothing to resume", h.store.pending)
     }
 
+    @Test fun `Cruciform's refusal ends the wait now, with its wording, and only for the live session`() = runTest(StandardTestDispatcher()) {
+        val h = Harness(this, { now }, announcer = RecordingAnnouncer(taken = true))
+        h.coordinator.start(inviteA, sameDevice = true)
+        advanceUntilIdle()
+        h.last.handshakeGate.complete(PairingOutcome.Ready(PairingSteps.Handshaked("1234567", DEVICE_ID)))
+        advanceUntilIdle()
+        assertTrue((h.state as PairingState.CompareSas).handedOff)
+        h.coordinator.refuse("sessB", "not ours")
+        assertTrue(h.state is PairingState.CompareSas)
+        h.coordinator.refuse("sessA", "the SAS differed.")
+        val failed = h.state as PairingState.Failed
+        assertEquals(PairingFailure.MISMATCH, failed.kind)
+        assertEquals("Cruciform refused the pairing: the SAS differed. Nothing was exchanged.", failed.message)
+        assertEquals(null, h.store.pending)
+    }
+
     @Test fun `re-firing the same invite while it is live is a no-op and a different one supersedes it`() = runTest(StandardTestDispatcher()) {
         val h = Harness(this, { now })
         val c = h.coordinator

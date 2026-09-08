@@ -364,6 +364,30 @@ class PairingCoordinator(
         verdict.complete(true)
     }
 
+    /**
+     * Cruciform refused this phone's one-tap report for [session] (its
+     * `pair-done?outcome=refused` return leg): the keys or the code disagreed with the
+     * relay reveal, so no admission will ever arrive. Fail the pairing now, with
+     * Cruciform's wording, instead of waiting out the relay session on "Approve in
+     * Cruciform". A session that is not the live one is ignored — nothing to fail.
+     */
+    fun refuse(session: String, reason: String) {
+        val current = _state.value
+        val live = when (current) {
+            is PairingState.Joining -> current
+            is PairingState.CompareSas -> current
+            else -> return
+        }
+        if (!live.session.equals(session, ignoreCase = true)) return
+        cancelLive()
+        finish(
+            PairingState.Failed(
+                live.session, live.inviteQr, live.sameDevice, PairingFailure.MISMATCH,
+                "Cruciform refused the pairing: $reason Nothing was exchanged.",
+            ),
+        )
+    }
+
     /** The codes differ — abort; the SAS never authorised anything. */
     fun rejectMatch() {
         _state.value as? PairingState.CompareSas ?: return

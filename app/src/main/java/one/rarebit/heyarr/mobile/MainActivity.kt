@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,7 +69,14 @@ import one.rarebit.heyarr.mobile.ui.screens.ConnectionFields
  * identical links distinct so the second re-fires. Either a usable [inviteQr] or a
  * [problem] to show.
  */
-private data class LinkedInvite(val inviteQr: String?, val problem: String?, val seq: Int, val done: Boolean = false)
+private data class LinkedInvite(
+    val inviteQr: String?,
+    val problem: String?,
+    val seq: Int,
+    val done: Boolean = false,
+    /** Cruciform refused the one-tap report: `(session, its reason)`. */
+    val refusal: Pair<String, String>? = null,
+)
 
 /**
  * A [FragmentActivity] because `BiometricPrompt` — which gates every use of the
@@ -106,8 +114,12 @@ class MainActivity : FragmentActivity() {
         is PairDeepLink.Invalid -> LinkedInvite(null, r.message, ++linkSeq)
         // The one-tap return leg (voidbind-kmp ADR-0008): nothing to join, nothing to
         // trust — just bring the human back to the Device screen, where the app-scoped
-        // pairing has (or is about to have) reached Enrolled on its own.
-        is PairDeepLink.Done -> LinkedInvite(null, null, ++linkSeq, done = true)
+        // pairing has (or is about to have) reached Enrolled on its own. A refusal is
+        // the one thing it can add: Cruciform's verdict, so the wait ends now.
+        is PairDeepLink.Done -> LinkedInvite(
+            null, null, ++linkSeq, done = true,
+            refusal = if (r.refused && r.session != null) r.session to (r.reason ?: "the report did not match the relay.") else null,
+        )
         null -> null
     }
 
@@ -116,7 +128,10 @@ class MainActivity : FragmentActivity() {
         // Draw edge-to-edge on every SDK (35+ forces it anyway); the shell keeps its
         // content inside the safe-drawing insets.
         enableEdgeToEdge()
-        linkedInvite = routeLink(intent)
+        // Only a fresh launch routes the launching intent. Android re-delivers it on every
+        // recreation (rotation, process death), and re-routing a consumed invite put an
+        // already-enrolled phone on "This phone is already enrolled" after a rotation.
+        if (savedInstanceState == null) linkedInvite = routeLink(intent)
         val appContext = applicationContext
         // This phone's device keys, biometric-gated through this activity. Attached
         // once per activity; the ViewModel outlives rotations and keeps the session.
@@ -170,11 +185,14 @@ class MainActivity : FragmentActivity() {
                 // Cruciform handed us an invite (or a broken link): route it into the same
                 // join path a scan takes, and put the Enrol screen in front — the standalone
                 // one before sign-in, the Device route once signed in.
-                var focusDevice by rememberSaveable { mutableStateOf(0) }
+                // Not saveable on purpose: a restored seq would re-navigate to the Device
+                // route after process death, while the link it came from is gone.
+                var focusDevice by remember { mutableStateOf(0) }
                 val link = linkedInvite
                 LaunchedEffect(link) {
                     link ?: return@LaunchedEffect
                     when {
+                        link.refusal != null -> vm.pairingRefused(link.refusal.first, link.refusal.second)
                         link.done -> Unit
                         link.inviteQr != null -> vm.receiveInviteLink(link.inviteQr)
                         else -> vm.rejectInviteLink(link.problem ?: "bad invite link")
