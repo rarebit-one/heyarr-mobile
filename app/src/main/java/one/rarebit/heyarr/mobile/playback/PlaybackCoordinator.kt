@@ -93,7 +93,7 @@ class PlaybackCoordinator(
     }
 
     /** Play one of a work's files: the asset's own blob hash and MIME drive the target. */
-    fun playAsset(work: Work, asset: WorkAsset) {
+    fun playAsset(work: Work, asset: WorkAsset, subtitles: List<WorkAsset> = emptyList()) {
         val cred = credential() ?: return
         val hash = asset.blobHash
         if (hash.isNullOrBlank()) {
@@ -104,12 +104,13 @@ class PlaybackCoordinator(
         val isVideo = PlaybackTarget.looksLikeVideo(mime, work.kind)
         val title = asset.filename?.let { "${work.title} — $it" } ?: work.title
         val client = PlaybackClient(transport, baseUrl(), cred)
+        val subs = client.subtitleSidecars(subtitles)
         val caps = capabilities
         if (caps == null) {
-            present(NowPlaying(target = client.blobTarget(hash, isVideo, mime), title = title, assetId = asset.id, blobHash = hash, verb = verbFor(isVideo), kind = work.kind))
+            present(NowPlaying(target = client.blobTarget(hash, isVideo, mime).copy(subtitles = subs), title = title, assetId = asset.id, blobHash = hash, verb = verbFor(isVideo), kind = work.kind))
             return
         }
-        resolveInto(client, asset.id, hash, isVideo, mime, title, caps, kind = work.kind)
+        resolveInto(client, asset.id, hash, isVideo, mime, title, caps, kind = work.kind, subtitles = subs)
     }
 
     /**
@@ -117,16 +118,17 @@ class PlaybackCoordinator(
      * continue card. Same plan/fallback path as [playAsset]; [kind] steers video-vs-audio
      * when the MIME does not.
      */
-    fun playFile(title: String, assetId: String, blobHash: String, mime: String?, kind: String?, startSeconds: Double? = null, artworkUrl: String? = null) {
+    fun playFile(title: String, assetId: String, blobHash: String, mime: String?, kind: String?, startSeconds: Double? = null, artworkUrl: String? = null, subtitles: List<WorkAsset> = emptyList()) {
         val cred = credential() ?: return
         val isVideo = PlaybackTarget.looksLikeVideo(mime, kind)
         val client = PlaybackClient(transport, baseUrl(), cred)
+        val subs = client.subtitleSidecars(subtitles)
         val caps = capabilities
         if (caps == null) {
-            present(NowPlaying(target = client.blobTarget(blobHash, isVideo, mime), title = title, assetId = assetId, blobHash = blobHash, verb = verbFor(isVideo), kind = kind, artworkUrl = artworkUrl), startSeconds)
+            present(NowPlaying(target = client.blobTarget(blobHash, isVideo, mime).copy(subtitles = subs), title = title, assetId = assetId, blobHash = blobHash, verb = verbFor(isVideo), kind = kind, artworkUrl = artworkUrl), startSeconds)
             return
         }
-        resolveInto(client, assetId, blobHash, isVideo, mime, title, caps, startSeconds, kind = kind, artworkUrl = artworkUrl)
+        resolveInto(client, assetId, blobHash, isVideo, mime, title, caps, startSeconds, kind = kind, artworkUrl = artworkUrl, subtitles = subs)
     }
 
     /**
@@ -149,14 +151,14 @@ class PlaybackCoordinator(
     fun reportResume(seconds: Double) = reporter.resume(seconds)
     fun reportEnded(seconds: Double, completed: Boolean) = reporter.end(seconds, completed)
 
-    private fun resolveInto(client: PlaybackClient, assetId: String, hash: String, isVideo: Boolean, mime: String?, title: String, caps: ClientCapabilities, knownStart: Double? = null, kind: String? = null, artworkUrl: String? = null) {
+    private fun resolveInto(client: PlaybackClient, assetId: String, hash: String, isVideo: Boolean, mime: String?, title: String, caps: ClientCapabilities, knownStart: Double? = null, kind: String? = null, artworkUrl: String? = null, subtitles: List<PlaybackTarget.Sidecar> = emptyList()) {
         // Plan first: the node may repackage for this phone. A node that predates the
         // contract answers 400 and `resolve` falls back to the blob.
         scope.launch {
             val target = withContext(io) {
                 runCatching { client.resolve(assetId, hash, isVideo, mime, caps) }
                     .getOrElse { client.blobTarget(hash, isVideo, mime).copy(reason = it.message) }
-            }
+            }.copy(subtitles = subtitles)
             present(NowPlaying(target = target, title = title, assetId = assetId, blobHash = hash, verb = verbFor(isVideo), kind = kind, artworkUrl = artworkUrl), knownStart)
         }
     }

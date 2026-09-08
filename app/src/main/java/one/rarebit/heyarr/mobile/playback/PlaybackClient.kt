@@ -1,6 +1,7 @@
 package one.rarebit.heyarr.mobile.playback
 
 import one.rarebit.heyarr.mobile.auth.Credential
+import one.rarebit.heyarr.mobile.library.WorkAsset
 import one.rarebit.heyarr.mobile.net.HttpTransport
 
 /**
@@ -37,6 +38,24 @@ class PlaybackClient(
         /** The node doesn't speak the contract (400 on `client`), or could not be asked. */
         data class Unavailable(val why: String) : PlanResult
     }
+
+    /**
+     * Build [PlaybackTarget.Sidecar]s for subtitle assets, each pointing at its own
+     * range-capable blob endpoint under this client's credential — so the player pulls
+     * them through the same authenticated data source as the video. The MIME is hinted
+     * from the filename (a blob URL has no extension), falling back to the asset's own;
+     * the language is read from the filename's tag. Assets with no blob are dropped.
+     */
+    fun subtitleSidecars(assets: List<WorkAsset>): List<PlaybackTarget.Sidecar> =
+        assets.mapNotNull { a ->
+            val hash = a.blobHash?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            PlaybackTarget.Sidecar(
+                url = blobContentUrl(baseUrl, hash),
+                mimeType = Subtitles.externalMimeType(a.filename) ?: a.mime,
+                language = Subtitles.languageTag(a.filename),
+                label = a.filename,
+            )
+        }
 
     /**
      * Build the direct-stream [PlaybackTarget] for a known blob hash: the range-capable

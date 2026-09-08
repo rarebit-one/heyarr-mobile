@@ -228,10 +228,10 @@ fun HeyarrNavHost(
 
     val onWant: (String, String) -> Unit = { id, title -> want = WantRequest(id, title) }
     val play = DetailPlayback(
-        playVideo = { work, assetId, hash, mime, title, start, queue, art ->
+        playVideo = { work, assetId, hash, mime, title, start, queue, art, subtitles ->
             personalActions.recordPlay(work.id)
             video.queue = queue
-            vm.playback.playFile(title, assetId, hash, mime, work.kind, start, art)
+            vm.playback.playFile(title, assetId, hash, mime, work.kind, start, art, subtitles)
         },
         playAudio = { work, tracks, start ->
             personalActions.recordPlay(work.id)

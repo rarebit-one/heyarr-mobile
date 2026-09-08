@@ -141,6 +141,23 @@ class VideoSession(
         val item = MediaItem.Builder().setUri(t.contentUrl).setMediaId(t.contentUrl)
             .apply { MediaMime.of(t.mimeType)?.let { setMimeType(it) } }
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+            .apply {
+                // External subtitle sidecars (ingested .srt/.vtt). Media3 pulls these through
+                // the same DefaultMediaSourceFactory data source as the video, so the auth
+                // header rides along; the first is flagged DEFAULT so captions show.
+                if (t.subtitles.isNotEmpty()) setSubtitleConfigurations(
+                    t.subtitles.mapIndexed { i, s ->
+                        MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(s.url))
+                            .apply {
+                                s.mimeType?.let { setMimeType(it) }
+                                s.language?.let { setLanguage(it) }
+                                s.label?.let { setLabel(it) }
+                                setSelectionFlags(if (i == 0) androidx.media3.common.C.SELECTION_FLAG_DEFAULT else 0)
+                            }
+                            .build()
+                    },
+                )
+            }
             .build()
         p.setMediaItem(item)
         p.prepare()
