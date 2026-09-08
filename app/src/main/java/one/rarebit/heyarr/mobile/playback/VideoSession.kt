@@ -52,6 +52,8 @@ class VideoSession(
     private val context: Context,
     private val okHttp: OkHttpClient,
     private val scope: CoroutineScope,
+    /** The `Authorization` value in force right now (net/AuthHeaderSource); null before sign-in. */
+    private val liveAuthorization: () -> String? = { null },
 ) {
     /** One selectable subtitle track: the Media3 group + index behind a human label. */
     data class TextTrack(val id: String, val label: String, val language: String?, val group: Tracks.Group, val trackIndex: Int)
@@ -118,7 +120,7 @@ class VideoSession(
         trackSelector = selector
         val p = ExoPlayer.Builder(context)
             .setTrackSelector(selector)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(HeyarrDataSource.factory(okHttp, t)))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(HeyarrDataSource.factory(okHttp, t, liveAuthorization)))
             .setHandleAudioBecomingNoisy(true)
             .build()
         p.addListener(listener)

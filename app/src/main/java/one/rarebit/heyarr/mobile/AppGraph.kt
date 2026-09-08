@@ -70,7 +70,7 @@ class AppGraph(app: Application, scope: CoroutineScope) {
     val audio: AudioPlayer by lazy { SessionAudioPlayer(app, scope) }
 
     /** The in-app video player, app-scoped so the now-playing bar can carry it between screens. */
-    val video: VideoSession by lazy { VideoSession(app, okHttp, scope) }
+    val video: VideoSession by lazy { VideoSession(app, okHttp, scope, liveAuthorization = authHeader::current) }
 
     /** Cover art and synopses from keyless public sources, cached under the app's cache dir (Settings → Appearance turns it off). */
     val external: ExternalMetadata by lazy {
