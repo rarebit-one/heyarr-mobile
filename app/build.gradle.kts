@@ -197,4 +197,13 @@ dependencies {
     // ── Unit tests (pure JVM — no Android runtime) ──────────────────────────────
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    // ── On-device smoke test (.github/workflows/instrumented.yml) ───────────────
+    // The JVM unit tests cannot see Android-only behaviour — the Series regex that
+    // compiled on the desktop JVM and threw on the phone's ICU engine took every
+    // Detail screen down (#49). One Compose test renders real screens on an emulator.
+    androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }
