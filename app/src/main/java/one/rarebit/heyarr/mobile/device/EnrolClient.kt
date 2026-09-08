@@ -2,6 +2,7 @@ package one.rarebit.heyarr.mobile.device
 
 import one.rarebit.heyarr.mobile.auth.Credential
 import one.rarebit.heyarr.mobile.net.HttpTransport
+import one.rarebit.heyarr.mobile.net.JsonScan
 import one.rarebit.heyarr.mobile.net.ProblemDetail
 import one.rarebit.voidbind.crypto.MiniJson
 
@@ -35,8 +36,15 @@ class EnrolClient(
     private val baseUrl: String,
 ) {
     sealed interface Outcome {
-        /** The node accepted the admission (self-enrol, or the admin route succeeded). */
-        data class Registered(val via: String) : Outcome
+        /**
+         * The node accepted the admission (self-enrol, or the admin route succeeded).
+         * [recoveryEncryptionKey], when present, is the identity's recovery encryption
+         * **public** key (`x25519:<hex>`) the `/enrol` response carried (issue #41 part 2,
+         * Option A) so a new space can be wrapped for recovery from enrolment onward. Null
+         * when the response had no such field (an older node, or an identity with no
+         * recovery key) — never a secret.
+         */
+        data class Registered(val via: String, val recoveryEncryptionKey: String? = null) : Outcome
 
         /** No route this caller can use — an operator must register the op. */
         data class NeedsAdmin(val reason: String) : Outcome
@@ -65,7 +73,10 @@ class EnrolClient(
                 .getOrElse { return Outcome.Failed("self-enrol: ${it.message}") }
         }
         when (self.status) {
-            200, 201, 204 -> return Outcome.Registered("POST /enrol")
+            // The enrolment response carries the identity's recovery encryption PUBLIC key
+            // (ADR-0049; issue #41 part 2) so new spaces are wrapped for recovery at once.
+            // Absent/blank (204, an older node) → null; recovery wraps for devices only.
+            200, 201, 204 -> return Outcome.Registered("POST /enrol", recoveryKey(self.body))
             404, 405 -> Unit // not mounted on this node — fall through to the admin lane
             else -> return Outcome.Failed(ProblemDetail.message(self.body, self.status, "self-enrol"))
         }
@@ -86,6 +97,14 @@ class EnrolClient(
     }
 
     companion object {
+        /**
+         * The recovery encryption public key from an `/enrol` response body
+         * (`"recovery_encryption_key": "x25519:<hex>"`), or null when the field is absent
+         * or empty. Public key only — the paper recovery secret never transits here.
+         */
+        fun recoveryKey(body: String): String? =
+            JsonScan.stringField(body, "recovery_encryption_key")?.trim()?.takeIf { it.isNotEmpty() }
+
         fun selfEnrolUrl(baseUrl: String) = baseUrl.trimEnd('/') + "/enrol"
         fun adminEnrolUrl(baseUrl: String) = baseUrl.trimEnd('/') + "/api/v1/identities/devices"
 

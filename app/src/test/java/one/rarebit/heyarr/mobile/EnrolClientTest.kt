@@ -84,4 +84,25 @@ class EnrolClientTest {
         val f = Fake(mapOf("http://h/enrol" to 400))
         assertEquals(EnrolClient.Outcome.Failed("nope"), EnrolClient(f, base).register("C", "P", "n", null))
     }
+
+    /** Issue #41 part 2: the enrolment response carries the recovery encryption PUBLIC key. */
+    @Test fun selfEnrolCarriesTheRecoveryEncryptionKey() {
+        val f = object : HttpTransport {
+            override fun get(url: String, headers: Map<String, String>) = HttpResponse(404, "")
+            override fun post(url: String, body: String?, contentType: String?, headers: Map<String, String>) =
+                HttpResponse(201, """{"recovery_encryption_key":"x25519:abcd"}""")
+        }
+        val out = EnrolClient(f, base).register("CERT", "PROOF", "phone", null)
+        assertEquals(EnrolClient.Outcome.Registered("POST /enrol", "x25519:abcd"), out)
+    }
+
+    /** No field (an older node, or an identity with no recovery key) → null, never a crash. */
+    @Test fun selfEnrolWithoutRecoveryKeyIsNull() {
+        val f = object : HttpTransport {
+            override fun get(url: String, headers: Map<String, String>) = HttpResponse(404, "")
+            override fun post(url: String, body: String?, contentType: String?, headers: Map<String, String>) =
+                HttpResponse(204, "")
+        }
+        assertEquals(EnrolClient.Outcome.Registered("POST /enrol", null), EnrolClient(f, base).register("C", "P", "n", null))
+    }
 }
