@@ -29,4 +29,32 @@ object Subtitles {
         val display = Locale.forLanguageTag(code).getDisplayName(Locale.ENGLISH)
         return display.takeIf { it.isNotBlank() && it != code } ?: code
     }
+
+    /**
+     * The Media3 MIME for an EXTERNAL subtitle sidecar, by extension — the hint a
+     * `MediaItem.SubtitleConfiguration` needs since a blob URL carries no extension.
+     * Unknown/absent returns null and Media3 sniffs. `.sub`/`.idx`/`.sup` are omitted
+     * deliberately: they are bitmap/paired formats a SubtitleConfiguration can't take
+     * from a lone URL, so we let them fall through rather than promise a MIME.
+     */
+    fun externalMimeType(filename: String?): String? =
+        when (filename?.substringAfterLast('.', "")?.lowercase()) {
+            "srt" -> "application/x-subrip"
+            "vtt" -> "text/vtt"
+            "ass", "ssa" -> "text/x-ssa"
+            else -> null
+        }
+
+    /** The BCP-47 language a sidecar filename carries (`…S04E01.en.srt` → "en"), or null. */
+    fun languageTag(filename: String?): String? {
+        val stem = filename?.substringBeforeLast('.')?.lowercase() ?: return null
+        val code = RE_LANG.find(stem)?.groupValues?.get(1) ?: return null
+        return THREE_TO_TWO[code] ?: code
+    }
+
+    private val RE_LANG = Regex("""\.(en|eng|es|spa|fr|fre|fra|de|ger|deu|it|ita|pt|por|ja|jpn|zh|chi|nl|dut|sv|swe)(?:\.(?:forced|sdh))?$""")
+    private val THREE_TO_TWO = mapOf(
+        "eng" to "en", "spa" to "es", "fre" to "fr", "fra" to "fr", "ger" to "de", "deu" to "de",
+        "ita" to "it", "por" to "pt", "jpn" to "ja", "chi" to "zh", "dut" to "nl", "swe" to "sv",
+    )
 }

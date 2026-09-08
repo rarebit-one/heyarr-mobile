@@ -30,4 +30,25 @@ class SubtitlesTest {
         // A code with no display name comes back as the code itself, not null.
         assertEquals("zz", Subtitles.languageName("zz"))
     }
+
+    @Test fun externalMimeMapsKnownSubtitleExtensions() {
+        assertEquals("application/x-subrip", Subtitles.externalMimeType("Show.S04E01.en.srt"))
+        assertEquals("text/vtt", Subtitles.externalMimeType("clip.vtt"))
+        assertEquals("text/x-ssa", Subtitles.externalMimeType("a.ass"))
+        assertEquals("text/x-ssa", Subtitles.externalMimeType("a.ssa"))
+        // Unknown/absent/bitmap → null so Media3 sniffs (or the asset's own MIME wins upstream).
+        assertNull(Subtitles.externalMimeType("a.sub"))
+        assertNull(Subtitles.externalMimeType("movie.mkv"))
+        assertNull(Subtitles.externalMimeType(null))
+    }
+
+    @Test fun languageTagReadsTheFilenameSuffix() {
+        assertEquals("en", Subtitles.languageTag("Show.S04E01.en.srt"))
+        assertEquals("en", Subtitles.languageTag("Show.S04E01.eng.srt"))       // 3-letter → 2
+        assertEquals("en", Subtitles.languageTag("Show.S04E01.en.forced.srt"))
+        assertEquals("fr", Subtitles.languageTag("Show.fra.vtt"))
+        // No language tag, or a non-language trailing token → null (not a false code).
+        assertNull(Subtitles.languageTag("Show.S04E01.srt"))
+        assertNull(Subtitles.languageTag(null))
+    }
 }

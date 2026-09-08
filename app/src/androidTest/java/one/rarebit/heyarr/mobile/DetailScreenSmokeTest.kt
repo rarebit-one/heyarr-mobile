@@ -50,7 +50,7 @@ class DetailScreenSmokeTest {
     }
 
     private val noPlayback = DetailPlayback(
-        playVideo = { _, _, _, _, _, _, _, _ -> },
+        playVideo = { _, _, _, _, _, _, _, _, _ -> },
         playAudio = { _, _, _ -> },
         read = { _, _ -> },
     )

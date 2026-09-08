@@ -50,7 +50,23 @@ data class PlaybackTarget(
     val streamBaseUrl: String? = null,
     /** Where the current repackage begins in the source, in seconds (0 at first play). */
     val streamStartSeconds: Double = 0.0,
+    /**
+     * External subtitle sidecars (ingested `.srt`/`.vtt` assets) to hand the player as
+     * `MediaItem.SubtitleConfiguration`s. Each [Sidecar.url] is the same range-capable
+     * blob endpoint the video uses, so Media3 fetches it through the one authenticated
+     * data source — the bearer applies unchanged. Empty for audio, movies with no
+     * sidecar, or a node that returned none.
+     */
+    val subtitles: List<Sidecar> = emptyList(),
 ) {
+    /** One external subtitle: where its bytes are, its MIME hint, and how to label it. */
+    data class Sidecar(
+        val url: String,
+        val mimeType: String? = null,
+        val language: String? = null,
+        val label: String? = null,
+    )
+
     /** Where a target came from, which decides what the player can honestly promise. */
     enum class Origin {
         /** The blob, without asking the node (no asset id, or the node predates the plan contract). */

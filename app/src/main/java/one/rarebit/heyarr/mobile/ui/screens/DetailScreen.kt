@@ -160,7 +160,7 @@ class DetailState(val workId: String) {
 /** How the detail screen starts playback — the phone's players, wired by the shell. */
 data class DetailPlayback(
     /** Play a video file in the in-app player, with the work's other episodes as "up next". */
-    val playVideo: (work: Work, assetId: String, blobHash: String, mime: String?, title: String, startSeconds: Double?, queue: List<QueueEntry>, artworkUrl: String?) -> Unit,
+    val playVideo: (work: Work, assetId: String, blobHash: String, mime: String?, title: String, startSeconds: Double?, queue: List<QueueEntry>, artworkUrl: String?, subtitles: List<WorkAsset>) -> Unit,
     /** Queue audio tracks (an album, an audiobook) from [start]. */
     val playAudio: (work: Work, tracks: List<WorkAsset>, start: Int) -> Unit,
     /** Open a readable file (EPUB / PDF / comic) in the reader. */
@@ -347,9 +347,9 @@ private fun DetailHero(session: AppSession, work: Work, type: MediaType, wants: 
             primary = {
                 when {
                     cont?.blobHash != null && type != MediaType.BOOK && type != MediaType.MUSIC && type != MediaType.AUDIOBOOK ->
-                        PrimaryButton("Continue", { play.playVideo(work, cont.assetId, cont.blobHash, cont.mime ?: work.mime, "${work.title} — ${cont.subtitle ?: cont.editionLabel ?: ""}".trimEnd(' ', '—'), cont.positionSeconds, queueOf(work, seasons, session), art) }, icon = Icons.Rounded.PlayArrow, enabled = state.busy == null)
+                        PrimaryButton("Continue", { play.playVideo(work, cont.assetId, cont.blobHash, cont.mime ?: work.mime, "${work.title} — ${cont.subtitle ?: cont.editionLabel ?: ""}".trimEnd(' ', '—'), cont.positionSeconds, queueOf(work, seasons, session), art, emptyList()) }, icon = Icons.Rounded.PlayArrow, enabled = state.busy == null)
                     type == MediaType.SERIES && first != null ->
-                        PrimaryButton("Play ${first.code ?: ""}".trim(), { play.playVideo(work, first.asset.id, first.asset.blobHash!!, first.asset.mime ?: work.mime, Series.playTitle(work, first), null, queueOf(work, seasons, session), art) }, icon = Icons.Rounded.PlayArrow, enabled = state.busy == null)
+                        PrimaryButton("Play ${first.code ?: ""}".trim(), { play.playVideo(work, first.asset.id, first.asset.blobHash!!, first.asset.mime ?: work.mime, Series.playTitle(work, first), null, queueOf(work, seasons, session), art, first.subtitles) }, icon = Icons.Rounded.PlayArrow, enabled = state.busy == null)
                     (type == MediaType.MUSIC || type == MediaType.AUDIOBOOK) && audioTracks.isNotEmpty() ->
                         PrimaryButton(theme.ctaLabel, { play.playAudio(work, audioTracks, 0) }, icon = if (type == MediaType.AUDIOBOOK) Icons.Rounded.Headphones else Icons.Rounded.PlayArrow)
                     type == MediaType.BOOK && readable != null ->
@@ -366,8 +366,8 @@ private fun DetailHero(session: AppSession, work: Work, type: MediaType, wants: 
                     }, icon = Icons.Rounded.Search, enabled = state.busy == null)
                     hash == null -> PrimaryButton("Want", { onWant(work.id, work.title) }, icon = Icons.Rounded.Add, enabled = status == LibraryStatus.NOT_TRACKED)
                     // Reached only past the `hash == null` branches above.
-                    type == MediaType.FEED || type == MediaType.PODCAST -> PrimaryButton(theme.ctaLabel, { play.playVideo(work, work.primaryAssetId ?: hash!!, hash!!, work.mime, work.title, null, emptyList(), art) }, icon = Icons.Rounded.OpenInNew, enabled = state.busy == null)
-                    else -> PrimaryButton(theme.ctaLabel, { play.playVideo(work, work.primaryAssetId ?: hash!!, hash!!, work.mime, work.title, null, emptyList(), art) }, icon = Icons.Rounded.PlayArrow, enabled = state.busy == null)
+                    type == MediaType.FEED || type == MediaType.PODCAST -> PrimaryButton(theme.ctaLabel, { play.playVideo(work, work.primaryAssetId ?: hash!!, hash!!, work.mime, work.title, null, emptyList(), art, emptyList()) }, icon = Icons.Rounded.OpenInNew, enabled = state.busy == null)
+                    else -> PrimaryButton(theme.ctaLabel, { play.playVideo(work, work.primaryAssetId ?: hash!!, hash!!, work.mime, work.title, null, emptyList(), art, emptyList()) }, icon = Icons.Rounded.PlayArrow, enabled = state.busy == null)
                 }
             },
             secondary = {
@@ -456,7 +456,7 @@ private fun SeasonsBlock(session: AppSession, work: Work, seasons: List<Season>,
         }
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             for (row in rows) when (row) {
-                is Episode -> EpisodeRow(session, work, row, state, extForSeason[row.number], onPlay = { ep -> play.playVideo(work, ep.asset.id, ep.asset.blobHash!!, ep.asset.mime ?: work.mime, Series.playTitle(work, ep), null, queue, art) })
+                is Episode -> EpisodeRow(session, work, row, state, extForSeason[row.number], onPlay = { ep -> play.playVideo(work, ep.asset.id, ep.asset.blobHash!!, ep.asset.mime ?: work.mime, Series.playTitle(work, ep), null, queue, art, ep.subtitles) })
                 is Int -> MissingEpisodeRow(session, selected, row, wants, extForSeason[row])
             }
         }
