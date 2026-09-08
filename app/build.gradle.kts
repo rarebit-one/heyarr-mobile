@@ -15,7 +15,7 @@ plugins {
 val releaseVersionName: String =
     providers.gradleProperty("releaseVersionName").orNull
         ?.trim()?.removePrefix("v")?.takeIf { it.isNotEmpty() }
-        ?: "0.3.1"
+        ?: "0.5.0"
 
 fun versionCodeOf(name: String): Int {
     val parts = name.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
