@@ -47,6 +47,26 @@ class LibraryClient(
         return WorksJson.parseOne(resp.body)
     }
 
+    /**
+     * Fetch one asset (`GET /assets/{id}`); null on a 404, throws on any other non-200.
+     * The single-asset shape carries its `edition_id`, which is how an asset id is
+     * resolved back to its work (asset → edition → work) — see [ItemResolver].
+     */
+    fun getAsset(id: String): WorkAsset? {
+        val resp = http.get(assetUrl(baseUrl, id), credential.asHeader())
+        if (resp.status == 404) return null
+        require(resp.status == 200) { "library: GET /assets/$id failed: HTTP ${resp.status}" }
+        return WorkDetailJson.parseAsset(resp.body)
+    }
+
+    /** Fetch one edition (`GET /editions/{id}`) — its `work_id` closes the asset→work join; null on 404. */
+    fun getEdition(id: String): Edition? {
+        val resp = http.get(editionUrl(baseUrl, id), credential.asHeader())
+        if (resp.status == 404) return null
+        require(resp.status == 200) { "library: GET /editions/$id failed: HTTP ${resp.status}" }
+        return WorkDetailJson.parseEdition(resp.body)
+    }
+
     companion object {
         /** The server's per-page maximum; asking for it minimises round trips. */
         const val PAGE_LIMIT = 200
@@ -69,5 +89,13 @@ class LibraryClient(
         /** Pure URL builder for a single work — unit-tested. */
         fun workUrl(baseUrl: String, id: String): String =
             baseUrl.trimEnd('/') + "/api/v1/works/" + URLEncoder.encode(id, "UTF-8")
+
+        /** `GET /assets/{id}` — a single asset (carries its `edition_id`). */
+        fun assetUrl(baseUrl: String, id: String): String =
+            baseUrl.trimEnd('/') + "/api/v1/assets/" + URLEncoder.encode(id, "UTF-8")
+
+        /** `GET /editions/{id}` — a single edition (carries its `work_id`). */
+        fun editionUrl(baseUrl: String, id: String): String =
+            baseUrl.trimEnd('/') + "/api/v1/editions/" + URLEncoder.encode(id, "UTF-8")
     }
 }

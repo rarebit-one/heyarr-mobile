@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import one.rarebit.heyarr.mobile.library.ItemResolver
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.Work
 import one.rarebit.heyarr.mobile.personalstate.PersonalStateCoordinator
@@ -27,6 +28,9 @@ internal class PersonalActionsViewModel(
     private val library: LibraryClient,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
+
+    /** Resolves a (possibly tagged) entry id to its work — asset/item ids fold to their work for these rows. */
+    private val resolver = ItemResolver(library)
 
     private val _starredIds = MutableStateFlow<Set<String>>(emptySet())
     val starredIds: StateFlow<Set<String>> = _starredIds.asStateFlow()
@@ -55,10 +59,14 @@ internal class PersonalActionsViewModel(
         viewModelScope.launch {
             withContext(io) {
                 val ids = runCatching { ps.starredIds() }.getOrDefault(emptyList())
+                // starredIds keeps the RAW (possibly tagged) entry ids: a track row's ★
+                // state checks `ItemRef.asset(id).encode() in starredIds`, a work card's `w.id`.
                 _starredIds.value = ids.toSet()
-                _starredWorks.value = ids.mapNotNull { runCatching { library.getWork(it) }.getOrNull() }
+                _starredWorks.value = ids.mapNotNull { runCatching { resolver.resolve(it)?.work }.getOrNull() }
+                    .distinctBy { it.id }
                 _recentWorks.value = runCatching { ps.recentlyPlayedIds() }.getOrDefault(emptyList())
-                    .mapNotNull { runCatching { library.getWork(it) }.getOrNull() }
+                    .mapNotNull { runCatching { resolver.resolve(it)?.work }.getOrNull() }
+                    .distinctBy { it.id }
                 _playlists.value = runCatching { ps.playlists() }.getOrDefault(emptyList())
             }
         }
