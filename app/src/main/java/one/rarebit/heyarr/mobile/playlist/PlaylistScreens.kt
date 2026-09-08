@@ -118,12 +118,15 @@ internal fun PlaylistScreen(
                     if (state.works.isNotEmpty()) PrimaryButton("Play all", { onPlayAll(state.works) }, icon = Icons.Rounded.PlayArrow, compact = true)
                 }
             }
-            item { SectionHeader(state.name.ifEmpty { "Playlist" }, subtitle = "${state.works.size} item${if (state.works.size == 1) "" else "s"}") }
+            item { SectionHeader(state.name.ifEmpty { "Playlist" }, subtitle = "${state.items.size} item${if (state.items.size == 1) "" else "s"}") }
             when {
                 state.loading -> item { MediaRowSkeleton(3) }
                 state.error != null -> item { Notice(state.error, tone = Tokens.danger) }
-                state.works.isEmpty() -> item { EmptyState("This playlist is empty", detail = "Add from any card's long-press menu.", icon = Icons.Rounded.PlaylistPlay) }
-                else -> items(state.works, key = { it.id }) { work ->
+                state.items.isEmpty() -> item { EmptyState("This playlist is empty", detail = "Add from any card's long-press menu, or a track's ⋯ menu.", icon = Icons.Rounded.PlaylistPlay) }
+                // Keyed by the stored entry id (not the work id) so per-track entries stay distinct,
+                // and Remove observes exactly that entry — a track removes the track, not the album.
+                else -> items(state.items, key = { it.itemId }) { row ->
+                    val work = row.work
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(Tokens.radiusInput)).background(Tokens.surface1).clickable { onOpenWork(work) }.padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -133,7 +136,7 @@ internal fun PlaylistScreen(
                             Text(work.title, style = MaterialTheme.typography.titleSmall, color = Tokens.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             listOfNotNull(work.artist ?: work.author, work.year?.toString()).joinToString("  ·  ").takeIf { it.isNotEmpty() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted) }
                         }
-                        IconButtonRound(Icons.Rounded.Close, "Remove ${work.title} from the playlist", { onRemove(work.id) }, size = 36.dp)
+                        IconButtonRound(Icons.Rounded.Close, "Remove ${work.title} from the playlist", { onRemove(row.itemId) }, size = 36.dp)
                     }
                 }
             }

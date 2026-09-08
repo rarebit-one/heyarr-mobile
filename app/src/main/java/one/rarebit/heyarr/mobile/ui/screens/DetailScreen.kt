@@ -35,7 +35,10 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -83,6 +86,7 @@ import one.rarebit.heyarr.mobile.music.isPrimaryRole
 import one.rarebit.heyarr.mobile.music.trackTitle
 import one.rarebit.heyarr.mobile.nav.Route
 import one.rarebit.heyarr.mobile.nav.detailRoute
+import one.rarebit.heyarr.mobile.personalstate.ItemRef
 import one.rarebit.heyarr.mobile.playback.QueueEntry
 import one.rarebit.heyarr.mobile.reader.ReaderFormat
 import one.rarebit.heyarr.mobile.search.FollowedItem
@@ -164,6 +168,34 @@ data class DetailPlayback(
 )
 
 /**
+ * The per-item personal-state affordances (★ / Add to playlist) the detail screen
+ * offers on an individual **track** or **file** (issue #41): [starredIds] holds the
+ * raw CRDT entry ids so a row can show its own ★ state, and the callbacks take an
+ * already-encoded entry id ([ItemRef.encode]). Disabled (and hidden) when this device
+ * holds no personal-state key. The whole-work affordances still live on the cards.
+ */
+data class DetailPersonal(
+    val enabled: Boolean = false,
+    val starredIds: Set<String> = emptySet(),
+    val onToggleStar: (itemId: String) -> Unit = {},
+    val onAddToPlaylist: (itemId: String) -> Unit = {},
+)
+
+/** ★ and Add-to-playlist for one file, keyed by its `asset:<id>` entry id. Hidden when disabled. */
+@Composable
+private fun AssetPersonalActions(personal: DetailPersonal, assetId: String, title: String) {
+    if (!personal.enabled) return
+    val entryId = ItemRef.asset(assetId).encode()
+    val starred = entryId in personal.starredIds
+    IconButtonRound(
+        if (starred) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+        if (starred) "Unstar $title" else "Star $title",
+        { personal.onToggleStar(entryId) }, size = 36.dp,
+    )
+    IconButtonRound(Icons.Rounded.PlaylistAdd, "Add $title to a playlist", { personal.onAddToPlaylist(entryId) }, size = 36.dp)
+}
+
+/**
  * The one adaptive detail template, built for consumption first — ported from
  * heyarr-desktop's `DetailScreen`. **Watch** is what you came for: the art, a synopsis
  * when the node has one (a public source's, labelled, when it has not; an honest line
@@ -173,7 +205,7 @@ data class DetailPlayback(
  * indexer candidates, scoring, health, captions and artwork, variants — one tab away.
  */
 @Composable
-fun DetailScreen(session: AppSession, route: Route.Detail, state: DetailState, play: DetailPlayback, onBack: () -> Unit, onOpen: (Route) -> Unit, onWant: (String, String) -> Unit, modifier: Modifier = Modifier) {
+fun DetailScreen(session: AppSession, route: Route.Detail, state: DetailState, play: DetailPlayback, onBack: () -> Unit, onOpen: (Route) -> Unit, onWant: (String, String) -> Unit, modifier: Modifier = Modifier, personal: DetailPersonal = DetailPersonal()) {
     val scope = rememberCoroutineScope()
     val wants: List<DesiredItem> = session.index.wantsFor(route.workId)
     val detail = state.detail
@@ -246,9 +278,9 @@ fun DetailScreen(session: AppSession, route: Route.Detail, state: DetailState, p
                 if (state.tab == DetailTab.WATCH) {
                     when (type) {
                         MediaType.SERIES -> item { SeasonsBlock(session, detail, seasons, state, wants, play, cover.url) }
-                        MediaType.MUSIC, MediaType.AUDIOBOOK -> item { TracksBlock(session, detail, state, play) }
+                        MediaType.MUSIC, MediaType.AUDIOBOOK -> item { TracksBlock(session, detail, state, play, personal) }
                         MediaType.FEED, MediaType.PODCAST -> item { ArchiveBlock(state, onOpen) }
-                        MediaType.BOOK -> item { BookFilesBlock(detail, state, play) }
+                        MediaType.BOOK -> item { BookFilesBlock(detail, state, play, personal) }
                         else -> item { FileBlock(detail, state) }
                     }
                 } else {
@@ -560,7 +592,7 @@ private fun MissingEpisodeRow(session: AppSession, season: Season, number: Int, 
 }
 
 @Composable
-private fun TracksBlock(session: AppSession, work: Work, state: DetailState, play: DetailPlayback) {
+private fun TracksBlock(session: AppSession, work: Work, state: DetailState, play: DetailPlayback, personal: DetailPersonal) {
     val assets = state.assets
     if (assets == null) { MediaRowSkeleton(5); return }
     val tracks = Tracks.all(assets)
@@ -573,10 +605,11 @@ private fun TracksBlock(session: AppSession, work: Work, state: DetailState, pla
         for ((i, t) in tracks.withIndex()) {
             val theme = LocalMediaTheme.current
             val idx = playable.indexOfFirst { it.id == t.id }
-            Row(Modifier.fillMaxWidth().background(Tokens.surface1, RoundedCornerShape(Tokens.radiusInput)).border(Tokens.hairline, Tokens.border, RoundedCornerShape(Tokens.radiusInput)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth().background(Tokens.surface1, RoundedCornerShape(Tokens.radiusInput)).border(Tokens.hairline, Tokens.border, RoundedCornerShape(Tokens.radiusInput)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("%02d".format(i + 1), style = MaterialTheme.typography.labelMedium, color = theme.accentGradientEnd, modifier = Modifier.width(28.dp))
                 Text(trackTitle(t), style = MaterialTheme.typography.titleSmall, color = if (t.isPlayable) Tokens.textPrimary else Tokens.textDisabled, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 t.sizeBytes?.let { Text(WorkAsset.formatBytes(it), style = MaterialTheme.typography.labelSmall, color = Tokens.textMuted) }
+                AssetPersonalActions(personal, t.id, trackTitle(t))
                 if (idx >= 0) IconButtonRound(Icons.Rounded.PlayArrow, "Play ${trackTitle(t)}", { play.playAudio(work, playable, idx) }, size = 36.dp, filled = true)
             }
         }
@@ -620,7 +653,7 @@ private fun FileBlock(work: Work, state: DetailState) {
 
 /** A book: each readable file with its format — Read opens the reader, an audiobook file listens through the queue. */
 @Composable
-private fun BookFilesBlock(work: Work, state: DetailState, play: DetailPlayback) {
+private fun BookFilesBlock(work: Work, state: DetailState, play: DetailPlayback, personal: DetailPersonal) {
     val assets = state.assets
     if (assets == null) { MediaRowSkeleton(3); return }
     val readable = assets.filter { it.isPlayable }.map { it to ReaderFormat.of(it.mime, it.filename) }
@@ -628,11 +661,12 @@ private fun BookFilesBlock(work: Work, state: DetailState, play: DetailPlayback)
         SectionHeader("Files", subtitle = "${readable.size} held")
         if (readable.isEmpty()) Notice("No readable file in the catalog yet.")
         for ((asset, format) in readable) {
-            Row(Modifier.fillMaxWidth().background(Tokens.surface1, RoundedCornerShape(Tokens.radiusInput)).border(Tokens.hairline, Tokens.border, RoundedCornerShape(Tokens.radiusInput)).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth().background(Tokens.surface1, RoundedCornerShape(Tokens.radiusInput)).border(Tokens.hairline, Tokens.border, RoundedCornerShape(Tokens.radiusInput)).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) {
                     Text(asset.filename ?: asset.id, style = MaterialTheme.typography.titleSmall, color = Tokens.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(listOfNotNull(format?.label, asset.sizeBytes?.let { WorkAsset.formatBytes(it) }).joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = Tokens.textMuted)
                 }
+                AssetPersonalActions(personal, asset.id, asset.filename ?: asset.id)
                 when (format) {
                     ReaderFormat.AUDIOBOOK -> PrimaryButton("Listen", { play.playAudio(work, listOf(asset), 0) }, icon = Icons.Rounded.Headphones, compact = true)
                     null -> SecondaryButton("Unsupported", {}, enabled = false, compact = true)

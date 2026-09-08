@@ -9,8 +9,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import one.rarebit.heyarr.mobile.library.ItemResolver
 import one.rarebit.heyarr.mobile.library.LibraryClient
 import one.rarebit.heyarr.mobile.library.Work
+import one.rarebit.heyarr.mobile.music.trackTitle
 import one.rarebit.heyarr.mobile.personalstate.PersonalStateCoordinator
 
 /**
@@ -79,12 +81,24 @@ internal class PlaylistViewModel(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
+    /**
+     * One playlist row: its opaque CRDT [itemId] (what [remove] must observe — a
+     * per-track entry is `asset:<id>`, not the work id) and the [work] to display,
+     * enriched with the track's title and playback handle when the entry is a file.
+     */
+    data class Item(val itemId: String, val work: Work)
+
     data class UiState(
         val loading: Boolean = true,
         val name: String = "",
-        val works: List<Work> = emptyList(),
+        val items: List<Item> = emptyList(),
         val error: String? = null,
-    )
+    ) {
+        /** The works alone, for "Play all". */
+        val works: List<Work> get() = items.map { it.work }
+    }
+
+    private val resolver = ItemResolver(library)
 
     private val _state = MutableStateFlow(UiState(name = titleHint ?: ""))
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -99,12 +113,27 @@ internal class PlaylistViewModel(
             val result = withContext(io) {
                 runCatching {
                     val view = personalState.playlist(spaceId)
-                    val works = view?.itemIds?.mapNotNull { runCatching { library.getWork(it) }.getOrNull() } ?: emptyList()
-                    (view?.name ?: "") to works
+                    val items = view?.itemIds?.mapNotNull { id ->
+                        runCatching { resolver.resolve(id) }.getOrNull()?.let { r ->
+                            // A file entry shows the track's title and plays the track itself;
+                            // a whole-work entry shows the work as before. The row is keyed by the
+                            // stored id, so two tracks of one album stay distinct and removable.
+                            val work = r.asset?.let { a ->
+                                r.work.copy(
+                                    title = trackTitle(a),
+                                    blobHash = a.blobHash,
+                                    mime = a.mime ?: r.work.mime,
+                                    primaryAssetId = a.id,
+                                )
+                            } ?: r.work
+                            Item(r.itemId, work)
+                        }
+                    } ?: emptyList()
+                    (view?.name ?: "") to items
                 }
             }
             _state.value = result.fold(
-                { (name, works) -> UiState(loading = false, name = name, works = works) },
+                { (name, items) -> UiState(loading = false, name = name, items = items) },
                 { _state.value.copy(loading = false, error = it.message ?: "couldn't open playlist") },
             )
         }

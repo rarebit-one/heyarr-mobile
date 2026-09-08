@@ -72,6 +72,7 @@ import one.rarebit.heyarr.mobile.ui.components.OfflineBanner
 import one.rarebit.heyarr.mobile.ui.components.ToastCard
 import one.rarebit.heyarr.mobile.ui.screens.AudioQueueScreen
 import one.rarebit.heyarr.mobile.ui.screens.CastScreen
+import one.rarebit.heyarr.mobile.ui.screens.DetailPersonal
 import one.rarebit.heyarr.mobile.ui.screens.DetailPlayback
 import one.rarebit.heyarr.mobile.ui.screens.DetailScreen
 import one.rarebit.heyarr.mobile.ui.screens.HomeScreen
@@ -211,9 +212,18 @@ fun HeyarrNavHost(
     val playlistsForAdd by personalActions.playlists.collectAsStateWithLifecycle()
     val personalRows = PersonalRows(
         starred = starredWorks, recentlyPlayed = recentWorks, starredIds = starredIds,
+        // A work card's id is a bare work id — i.e. ItemRef.work(id).encode() — so it round-trips as-is.
         onToggleStar = if (personalActions.enabled) ({ w: Work -> personalActions.toggleStar(w.id) }) else null,
         onAddToPlaylist = if (personalActions.enabled) ({ w: Work -> personalActions.openAddToPlaylist(w.id) }) else null,
         onOpenPlaylists = if (personalActions.enabled) ({ navController.navigate(Route.Playlists) }) else null,
+    )
+    // Per-track / per-file ★ and Add-to-playlist for the detail screen (issue #41); ids arrive already
+    // tagged as `asset:<id>`, so toggleStar/openAddToPlaylist store them opaquely as-is.
+    val detailPersonal = DetailPersonal(
+        enabled = personalActions.enabled,
+        starredIds = starredIds,
+        onToggleStar = { id -> personalActions.toggleStar(id) },
+        onAddToPlaylist = { id -> personalActions.openAddToPlaylist(id) },
     )
 
     val onWant: (String, String) -> Unit = { id, title -> want = WantRequest(id, title) }
@@ -312,7 +322,7 @@ fun HeyarrNavHost(
                                 }
                                 composable<Route.Detail> { entry ->
                                     val route = entry.toRoute<Route.Detail>()
-                                    DetailScreen(session, route, holder.detail(route.workId), play, onBack = ::back, onOpen = ::open, onWant = onWant, modifier = content)
+                                    DetailScreen(session, route, holder.detail(route.workId), play, onBack = ::back, onOpen = ::open, onWant = onWant, modifier = content, personal = detailPersonal)
                                 }
                                 composable<Route.Playlists> {
                                     val plVm: PlaylistsViewModel = viewModel(key = "playlists:${env.key}", factory = viewModelFactory { initializer { PlaylistsViewModel(vm.personalState(env.baseUrl, env.credential)) } })
