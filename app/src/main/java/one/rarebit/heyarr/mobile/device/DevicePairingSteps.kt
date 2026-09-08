@@ -90,9 +90,14 @@ class DevicePairingSteps(
             } catch (e: Exception) {
                 return@runInterruptible EnrolClient.Outcome.Failed("could not sign with the device key (${e.message}) — bring the app to the front and register again")
             }
-            EnrolClient(nodeTransport, baseUrl()).register(
+            val outcome = EnrolClient(nodeTransport, baseUrl()).register(
                 op, proof, deviceName(), credential(),
                 ops = MembershipOps.presentable(ring.knownOps(), op),
             )
+            // Option A (issue #41 part 2): the enrolment response carried the identity's
+            // recovery encryption PUBLIC key — persist it so new spaces wrap for recovery.
+            (outcome as? EnrolClient.Outcome.Registered)?.recoveryEncryptionKey
+                ?.let { runCatching { ring.saveRecoveryRecipient(it) } }
+            outcome
         }
 }

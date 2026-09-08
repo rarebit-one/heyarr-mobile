@@ -70,6 +70,7 @@ class DeviceKeyring(
     private fun encPubFile() = File(dir(), "enc.$alias.pub")
     private fun certFile() = File(dir(), "cert.$alias.token")
     private fun opsFile() = File(dir(), "ops.$alias.json")
+    private fun recoveryFile() = File(dir(), "recovery.$alias.pub")
 
     /** True once the sealed signing key exists on this phone (no prompt to check). */
     fun isProvisioned(): Boolean = File(File(app.filesDir, "voidbind"), "$alias.key").exists()
@@ -175,10 +176,26 @@ class DeviceKeyring(
         saveOps(admission.ops)
     }
 
+    /**
+     * The identity's recovery encryption **public** key (`x25519:<hex>`), persisted PLAIN
+     * from the enrolment response (issue #41 part 2), or null if none was provisioned. It
+     * is a recipient a new space is also wrapped for, so state survives losing every
+     * device; it is a public key only — no secret is ever stored here.
+     */
+    fun recoveryRecipient(): String? =
+        recoveryFile().takeIf { it.exists() }?.readText()?.trim()?.ifEmpty { null }
+
+    /** Persist the recovery encryption public key delivered by `/enrol` (a blank value clears it). */
+    fun saveRecoveryRecipient(key: String) {
+        val trimmed = key.trim()
+        if (trimmed.isEmpty()) recoveryFile().delete() else recoveryFile().writeText(trimmed)
+    }
+
     /** Forget the admission (the keys stay — re-pairing re-uses them). */
     fun clearCert() {
         certFile().delete()
         opsFile().delete()
+        recoveryFile().delete()
     }
 
     /** Snapshot for the UI. Provisions the keys on first call. */

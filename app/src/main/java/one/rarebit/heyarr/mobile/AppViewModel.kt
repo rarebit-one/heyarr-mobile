@@ -134,7 +134,7 @@ class AppViewModel internal constructor(
             one.rarebit.heyarr.mobile.personalstate.SpaceSession(
                 one.rarebit.heyarr.mobile.personalstate.PersonalStateClient(transport, baseUrl, cred),
                 one.rarebit.heyarr.mobile.personalstate.KeyringDeviceEncKey(ring),
-                additionalRecipients = { memberEncRecipients(ring) },
+                additionalRecipients = { memberEncRecipients(ring) + recoveryRecipients(ring) },
             ),
             spaceRegistry,
         )
@@ -157,6 +157,18 @@ class AppViewModel internal constructor(
             .distinct()
             .mapNotNull { one.rarebit.heyarr.mobile.personalstate.parseX25519Recipient(it) }
     }
+
+    /**
+     * The identity's recovery encryption **public** key, if enrolment provisioned one
+     * (issue #41 part 2, Option A): a `x25519:<hex>` recipient a new space is also wrapped
+     * for, so state survives losing every device. Empty (the honest degraded default)
+     * until enrolment carries the key, or on a node/identity that has none.
+     */
+    private fun recoveryRecipients(ring: DeviceKeyring): List<ByteArray> =
+        ring.recoveryRecipient()
+            ?.let { one.rarebit.heyarr.mobile.personalstate.parseX25519Recipient(it) }
+            ?.let { listOf(it) }
+            ?: emptyList()
 
     /** The coordinator for the current node + credential (null before enrolment). */
     private fun currentPersonalState(): one.rarebit.heyarr.mobile.personalstate.PersonalStateCoordinator? =
