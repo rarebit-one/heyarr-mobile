@@ -2,6 +2,7 @@ package one.rarebit.heyarr.mobile.playback
 
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import okhttp3.OkHttpClient
 
@@ -26,19 +27,30 @@ import okhttp3.OkHttpClient
  */
 @UnstableApi
 object HeyarrDataSource {
+    private const val AUTHORIZATION = "Authorization"
 
-    /**
-     * The request-property map ExoPlayer applies to every (ranged) read for a target —
-     * just the `Authorization` header today. Pure + unit-tested.
-     */
     fun authRequestProperties(target: PlaybackTarget): Map<String, String> = target.authHeaders()
 
     /**
-     * A Media3 [DataSource.Factory] for [target]: an OkHttp-backed HTTP data source
-     * carrying the auth header on every range read. [client] is shared with the rest of
-     * the app so connection pools and timeouts are one policy.
+     * The `Authorization` value for one read: the live one when the app can mint it
+     * (an enrolled phone's possession proof lives about two minutes and is re-minted
+     * by the library; a session token also lapses), else the value the target was
+     * planned with. Pure, so the choice is unit-tested.
      */
-    fun factory(client: OkHttpClient, target: PlaybackTarget): DataSource.Factory =
-        OkHttpDataSource.Factory(client)
-            .setDefaultRequestProperties(authRequestProperties(target))
+    fun authorization(live: String?, target: PlaybackTarget): String? =
+        live?.takeIf { it.isNotBlank() } ?: target.authHeaders()[AUTHORIZATION]
+
+    /**
+     * A factory whose every open re-stamps `Authorization` through [live]. The header
+     * used to be frozen into the factory's default request properties at play time, and
+     * because a request that already carries one is left alone by the app's interceptor,
+     * a film outlived its proof: every range read after ~2 minutes came back 401.
+     */
+    fun factory(client: OkHttpClient, target: PlaybackTarget, live: () -> String? = { null }): DataSource.Factory {
+        val upstream = OkHttpDataSource.Factory(client)
+        return ResolvingDataSource.Factory(upstream) { spec ->
+            val value = authorization(live(), target)
+            if (value == null) spec else spec.withAdditionalHeaders(mapOf(AUTHORIZATION to value))
+        }
+    }
 }
