@@ -304,10 +304,10 @@ fun HeyarrNavHost(
                                         onCreateKey = vm::provisionDevice, onJoinInvite = vm::joinPairing,
                                         onSasMatches = vm::confirmSas, onSasMismatch = vm::rejectSas,
                                         onRetry = vm::retryEnrol, onForget = vm::forgetDevice,
-                                        onDone = { vm.useDeviceCredential(); navController.navigateTab(Route.Home) },
                                         modifier = content.padding(horizontal = Tokens.screenPadding),
                                         parkedInvite = parkedInvite, onDiscardParked = vm::discardParkedInvite,
                                         onCancelPairing = vm::cancelPairing, onRegister = vm::registerDevice,
+                                        manage = true,
                                     )
                                 }
                                 composable<Route.Detail> { entry ->
