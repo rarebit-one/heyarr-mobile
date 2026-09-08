@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -185,7 +186,6 @@ fun EnrolScreen(
     onSasMismatch: () -> Unit,
     onRetry: () -> Unit,
     onForget: () -> Unit,
-    onDone: () -> Unit,
     modifier: Modifier = Modifier,
     /** An invite from Cruciform on this phone waiting for the device key (see [AppViewModel.receiveInviteLink]). */
     parkedInvite: String? = null,
@@ -194,6 +194,12 @@ fun EnrolScreen(
     onCancelPairing: () -> Unit = {},
     /** `POST /enrol` again for a stored admission the node has not accepted yet. */
     onRegister: () -> Unit = {},
+    /**
+     * Show the device's key material and the "Forget enrolment" control — the Device page
+     * under Settings. The pre-sign-in host hides both: an enrolment in progress needs
+     * neither, and a registered admission signs the phone in by itself (EnrolAdvance).
+     */
+    manage: Boolean = false,
 ) {
     val now = rememberNowMillis()
     // When the one-tap hand-off to Cruciform started, so the SAS fallback can appear if
@@ -204,14 +210,7 @@ fun EnrolScreen(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("Enrol this device", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "Turn this phone into an enrolled heyarr device: its own hardware-sealed key, " +
-                "authorised by your Voidbind identity. Until then you're signed in with a " +
-                "read-only QR session.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
+        Text(if (manage) "This device" else "Enrol this device", style = MaterialTheme.typography.headlineMedium)
         val info = when (state) {
             is EnrolUiState.Ready -> state.info
             is EnrolUiState.Joining -> state.info
@@ -222,24 +221,24 @@ fun EnrolScreen(
             is EnrolUiState.Error -> state.info
             EnrolUiState.Loading, EnrolUiState.Unprovisioned -> null
         }
-        if (info != null) DeviceKeyCard(info)
+        if (info != null) DeviceKeyLine(info, full = manage)
         if (parkedInvite != null) ParkedInviteCard(parkedInvite, onDiscardParked)
-
         when (state) {
             EnrolUiState.Loading -> {
                 CircularProgressIndicator()
-                Text("Preparing the device key… confirm the prompt if asked.")
+                Text("Creating this phone's device key… confirm the prompt if asked.")
             }
             is EnrolUiState.Registering -> {
                 CircularProgressIndicator()
-                Text("Admission received and stored. Registering with the node (POST /enrol)… confirm the prompt if asked.")
+                Text("Admission received. Registering with the node… confirm the prompt if asked.")
             }
             EnrolUiState.Unprovisioned -> {
+                // With a parked invite the key is being created without a tap; the Loading
+                // state follows at once, so this branch only matters on the manual path.
                 Text("No device key yet", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Create this phone's Ed25519 device key. It is generated once and sealed by a " +
-                        "non-extractable key in the secure hardware (StrongBox where the phone has one, " +
-                        "otherwise the TEE), so you'll be asked to confirm it's you.",
+                    "This phone gets its own Ed25519 device key, sealed by the secure hardware. " +
+                        "You confirm it's you once.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(onClick = onCreateKey) { Text("Create device key") }
@@ -247,30 +246,25 @@ fun EnrolScreen(
             is EnrolUiState.Ready -> {
                 Text("Pair with your identity", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "A device that is already a member of your Voidbind identity admits this one: " +
-                        "open \"Add a device\" in Cruciform on another phone, or run `voidbind " +
-                        "pair-initiate` on your Mac, and join the invite it shows here.",
+                    "In Cruciform, open \"Add a device\" and choose \"Send to heyarr\" — this phone joins " +
+                        "the invite and you allow it there, with your fingerprint.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                InviteEntry(onJoinInvite)
+                OtherDeviceEntry(onJoinInvite)
             }
             is EnrolUiState.Joining -> {
-                val parsed = PairInvite.check(state.inviteQr) as? PairInvite.Valid
                 Text(
                     if (state.sameDevice) "Joining Cruciform's invite…" else "Joining the pairing…",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    "Connecting to the relay the invite names and running the handshake. " +
-                        (if (state.sameDevice) "Cruciform on this phone" else "The other device") +
-                        " must prove it is a member of the identity before any code is shown; " +
-                        "next you'll compare a security code with the one on its screen.",
+                    if (state.sameDevice) {
+                        "Cruciform will come back to the front on its own and ask you to allow this phone."
+                    } else {
+                        "The other device must prove it is a member of your identity first; then you'll " +
+                            "compare a security code with the one on its screen."
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "Relay: " + (parsed?.relay ?: "—") + "\nIdentity: " + (parsed?.user ?: "—"),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
                 )
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
                 if (state.deadlineMillis > 0) {
@@ -285,11 +279,10 @@ fun EnrolScreen(
             is EnrolUiState.CompareSas -> if (state.handedOff) {
                 // ADR-0008: the apps compared. One question, in Cruciform, behind its
                 // fingerprint — no code on this screen unless it goes quiet.
-                Text("Approve in Cruciform", style = MaterialTheme.typography.titleMedium)
+                Text("Allow it in Cruciform", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Cruciform is on this phone, so the two apps checked each other's keys directly — " +
-                        "there is no code for you to compare. It is asking you to allow this app; confirm " +
-                        "there with your fingerprint and you'll land back here, enrolled.",
+                    "The two apps checked each other's keys directly, so there is no code to compare. " +
+                        "Confirm in Cruciform and you'll land back here, signed in.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
@@ -323,8 +316,7 @@ fun EnrolScreen(
                 if (state.awaitingAdmission) {
                     Text(
                         if (state.sameDevice) {
-                            "Waiting for Cruciform to approve. Switch to it, confirm with your fingerprint, and come " +
-                                "back — this finishes on its own, even while you're over there."
+                            "Waiting for Cruciform to approve — this finishes on its own, even while you're over there."
                         } else {
                             "Waiting for the other device to approve — confirm there."
                         },
@@ -351,24 +343,33 @@ fun EnrolScreen(
                 }
             }
             is EnrolUiState.Enrolled -> {
-                Text("Enrolled.", style = MaterialTheme.typography.titleMedium)
-                Text(state.registration, style = MaterialTheme.typography.bodySmall,
-                    color = if (state.needsAdmin) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                if (state.needsAdmin && info?.certToken != null) {
-                    Text("Admitting op to register:", style = MaterialTheme.typography.labelSmall)
-                    SelectionContainer {
-                        Text(info.certToken, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                val settled = !state.needsAdmin && !state.retriable
+                if (settled && !manage) {
+                    // The registered admission signs the phone in by itself (EnrolAdvance);
+                    // this is the beat before the shell appears.
+                    Text("Enrolled — signing in…", style = MaterialTheme.typography.titleMedium)
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                } else {
+                    Text(if (settled) "Enrolled" else "Admission stored", style = MaterialTheme.typography.titleMedium)
+                    Text(state.registration, style = MaterialTheme.typography.bodySmall,
+                        color = if (state.needsAdmin) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (state.needsAdmin && info?.certToken != null) {
+                        Text("Admitting op to register:", style = MaterialTheme.typography.labelSmall)
+                        SelectionContainer {
+                            Text(info.certToken, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                        }
                     }
-                }
-                Text(
-                    "This device now signs in with its own admission (${info?.knownOps?.size ?: 0} membership " +
-                        "op(s) known). Whether it can also manage follows depends on the grant an admin gives its key.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (state.retriable) Button(onClick = onRegister) { Text("Register again") }
-                    Button(onClick = onDone) { Text("Continue") }
-                    OutlinedButton(onClick = onForget) { Text("Forget enrolment") }
+                    if (settled) {
+                        Text(
+                            "This device signs in with its own admission (${info?.knownOps?.size ?: 0} membership " +
+                                "op(s) known). Whether it can also manage follows depends on the grant an admin gives its key.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (state.retriable) Button(onClick = onRegister) { Text("Register again") }
+                        if (manage || !settled) OutlinedButton(onClick = onForget) { Text("Forget enrolment") }
+                    }
                 }
             }
             is EnrolUiState.Removed -> {
@@ -392,6 +393,18 @@ fun EnrolScreen(
     }
 }
 
+/** The cross-device path, folded behind one line until it is wanted. */
+@Composable
+private fun OtherDeviceEntry(onJoin: (String) -> Unit) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    if (!open) {
+        TextButton(onClick = { open = true }) { Text("Pair from another device instead") }
+    } else {
+        Text("Pair from another device", style = MaterialTheme.typography.titleSmall)
+        InviteEntry(onJoin)
+    }
+}
+
 /**
  * An invite Cruciform on this phone handed us before this phone could join it — no
  * device key yet (creating one asks for a fingerprint, so a link never triggers that
@@ -407,12 +420,12 @@ private fun ParkedInviteCard(inviteQr: String, onDiscard: () -> Unit) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Invite from Cruciform on this phone", style = MaterialTheme.typography.titleSmall)
             Text(
-                "Cruciform's \"Add a device\" sent this phone an invite. Create the device key below " +
-                    "(you'll confirm with your fingerprint) and the invite is joined automatically.",
+                "Cruciform's \"Add a device\" sent this phone an invite. Confirm the fingerprint prompt " +
+                    "to create this phone's key; the invite is joined on its own after that.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Text(
-                "Relay: " + (parsed?.relay ?: "—") + "\nIdentity: " + (parsed?.user ?: "—"),
+                "Identity: " + (parsed?.user?.take(24)?.plus("…") ?: "—"),
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
             )
@@ -422,7 +435,21 @@ private fun ParkedInviteCard(inviteQr: String, onDiscard: () -> Unit) {
 }
 
 @Composable
-private fun DeviceKeyCard(info: DeviceKeyInfo) {
+private fun DeviceKeyLine(info: DeviceKeyInfo, full: Boolean) {
+    val tier = when (info.tier) {
+        KeyTier.STRONGBOX -> "StrongBox"
+        KeyTier.TEE -> "TEE"
+        KeyTier.SOFTWARE -> "software only — NOT hardware-backed"
+    }
+    val status = if (info.isEnrolled) "enrolled" else "not enrolled yet"
+    if (!full) {
+        Text(
+            "Device key ${info.deviceKey.removePrefix("ed25519:").take(8)}… · $tier · $status",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (info.tier == KeyTier.SOFTWARE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("This device's key", style = MaterialTheme.typography.titleSmall)
@@ -430,18 +457,12 @@ private fun DeviceKeyCard(info: DeviceKeyInfo) {
                 Text(info.deviceKey, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
             }
             Text(
-                "Key storage: " + when (info.tier) {
-                    KeyTier.STRONGBOX -> "StrongBox secure element (hardware-sealed, user-presence gated)"
-                    KeyTier.TEE -> "TEE-backed Android Keystore (hardware-sealed, user-presence gated; this device has no StrongBox)"
-                    KeyTier.SOFTWARE -> "software only — NOT hardware-backed"
-                },
+                "Key storage: $tier (hardware-sealed, user-presence gated)".takeIf { info.tier != KeyTier.SOFTWARE }
+                    ?: "Key storage: $tier",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (info.tier == KeyTier.SOFTWARE) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
-                if (info.isEnrolled) "Status: enrolled (holds a member-signed admission)" else "Status: not enrolled yet",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Text("Status: $status", style = MaterialTheme.typography.bodySmall)
             if (info.userId != null) {
                 SelectionContainer {
                     Text("Identity: " + info.userId, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
@@ -510,10 +531,9 @@ private fun InviteEntry(onJoin: (String) -> Unit) {
         }
     }
 
-    Text("Join an invite", style = MaterialTheme.typography.titleSmall)
     Text(
-        "Cruciform's \"Add a device\" (on a phone that is already a member) or `voidbind pair-initiate` " +
-            "on your Mac shows an invite QR. Scan it here, or paste the voidbind:pair?… text.",
+        "Cruciform on another phone, or `voidbind pair-initiate` on your Mac, shows an invite QR. " +
+            "Scan it here, or paste the voidbind:pair?… text.",
         style = MaterialTheme.typography.bodySmall,
     )
     if (scanning) {

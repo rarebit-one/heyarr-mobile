@@ -47,7 +47,6 @@ import androidx.media3.common.util.UnstableApi
 import one.rarebit.heyarr.mobile.device.AndroidBiometricGate
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
 import one.rarebit.heyarr.mobile.device.EnrolScreen
-import one.rarebit.heyarr.mobile.device.EnrolUiState
 import one.rarebit.heyarr.mobile.device.HandoffLauncher
 import one.rarebit.heyarr.mobile.device.PairDeepLink
 import one.rarebit.heyarr.mobile.login.LoginScreen
@@ -155,10 +154,13 @@ class MainActivity : FragmentActivity() {
                     app.readingPositionSync = vm.readingPositionSync
                 }
                 val enrolState by vm.enrolState.collectAsStateWithLifecycle()
-                LaunchedEffect(enrolState is EnrolUiState.Joining) {
-                    if (enrolState is EnrolUiState.Joining) ensureNotificationPermission()
-                }
                 val loginState by vm.loginState.collectAsStateWithLifecycle()
+                // Ask for notifications once the phone is signed in and settled, not in the
+                // middle of the pairing hand-off where it landed on top of the fingerprint
+                // prompt and the app switch to Cruciform.
+                LaunchedEffect(loginState is LoginUiState.Approved) {
+                    if (loginState is LoginUiState.Approved) ensureNotificationPermission()
+                }
                 val config by vm.configState.collectAsStateWithLifecycle()
                 var showSettings by rememberSaveable { mutableStateOf(false) }
                 var showEnrol by rememberSaveable { mutableStateOf(false) }
@@ -180,6 +182,11 @@ class MainActivity : FragmentActivity() {
                     showSettings = false
                     showEnrol = true
                     focusDevice = link.seq
+                }
+                // A registered admission signs the phone in by itself (EnrolAdvance): drop the
+                // enrol frame and the deep-link focus so the shell opens on Home, not Device.
+                LaunchedEffect(loginState is LoginUiState.Approved) {
+                    if (loginState is LoginUiState.Approved) { showEnrol = false; focusDevice = 0 }
                 }
 
                 Box(Modifier.fillMaxSize().background(Tokens.bgBase)) {
@@ -208,11 +215,6 @@ class MainActivity : FragmentActivity() {
                                     onSasMismatch = vm::rejectSas,
                                     onRetry = vm::retryEnrol,
                                     onForget = vm::forgetDevice,
-                                    // Finishing enrol here signs the phone in (adopts the Device
-                                    // credential → Approved → the shell). Clear focusDevice so the
-                                    // shell's LaunchedEffect(focusDevice) doesn't see the stale
-                                    // deep-link seq and yank the user to the Device route (#24).
-                                    onDone = { vm.useDeviceCredential(); showEnrol = false; focusDevice = 0 },
                                     modifier = Modifier,
                                     parkedInvite = parkedInvite,
                                     onDiscardParked = vm::discardParkedInvite,

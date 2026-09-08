@@ -14,6 +14,7 @@ import one.rarebit.heyarr.mobile.auth.Credential
 import one.rarebit.heyarr.mobile.device.DeviceKeyInfo
 import one.rarebit.heyarr.mobile.device.DeviceKeyring
 import one.rarebit.heyarr.mobile.device.EnrolClient
+import one.rarebit.heyarr.mobile.device.EnrolAdvance
 import one.rarebit.heyarr.mobile.device.EnrolUiState
 import one.rarebit.heyarr.mobile.device.InMemoryPendingPairingStore
 import one.rarebit.heyarr.mobile.device.MembershipClient
@@ -338,6 +339,8 @@ class AppViewModel internal constructor(
 
     /** True while [enrolState] is a projection of the coordinator's (non-idle) state. */
     private var showingPairing = false
+    /** The admission op this ViewModel already adopted on its own (see reflectPairing). */
+    private var autoAdoptedOp: String? = null
 
     init {
         // The Enrol screen's state is a projection of the app-scoped pairing wherever
@@ -382,6 +385,12 @@ class AppViewModel internal constructor(
                 val shown = fresh ?: info ?: return
                 _deviceInfo.value = shown
                 _enrolState.value = EnrolUiState.Enrolled(shown, ps.registration, ps.needsAdmin, retriable = ps.retriable)
+                // The node accepted the admission: sign in with it now, no "Continue" to tap.
+                // Keyed on the op so a re-reported Enrolled (a recreation) adopts once.
+                if (EnrolAdvance.adoptsOnEnrolled(ps.registered, ps.needsAdmin, ps.retriable) && autoAdoptedOp != ps.op) {
+                    autoAdoptedOp = ps.op
+                    useDeviceCredential()
+                }
             }
             is PairingState.Failed -> {
                 showingPairing = true
@@ -454,32 +463,35 @@ class AppViewModel internal constructor(
         }
         // A new link supersedes any in-flight join of an older one; the SAME link (Android
         // re-delivers the launching intent on a recreation) is a no-op in the coordinator.
-        when (val state = _enrolState.value) {
-            is EnrolUiState.Ready -> {
+        // The steps are EnrolAdvance's: the same-phone path asks this app for nothing.
+        val state = _enrolState.value
+        when (EnrolAdvance.onInvite(state)) {
+            EnrolAdvance.OnInvite.JOIN -> {
                 _parkedInvite.value = null
+                if (state is EnrolUiState.Error) _enrolState.value = EnrolUiState.Ready(state.info!!)
                 joinPairing(invite, sameDevice = true)
             }
-            is EnrolUiState.Enrolled -> {
+            EnrolAdvance.OnInvite.PROVISION_THEN_JOIN -> {
+                // The fingerprint prompt has its reason on screen (the parked-invite card),
+                // so the key is created without a tap; continueParkedInvite() joins after.
+                _parkedInvite.value = invite
+                provisionDevice()
+            }
+            EnrolAdvance.OnInvite.PARK -> {
+                _parkedInvite.value = invite
+                if (state is EnrolUiState.Joining || state is EnrolUiState.CompareSas) {
+                    // A pairing in flight: the new link wins (the coordinator dedupes the same one).
+                    val info = _deviceInfo.value
+                    if (info != null) { _parkedInvite.value = null; joinPairing(invite, sameDevice = true) }
+                }
+            }
+            EnrolAdvance.OnInvite.REFUSE -> {
                 _parkedInvite.value = null
                 _enrolState.value = EnrolUiState.Error(
-                    state.info,
+                    (state as EnrolUiState.Enrolled).info,
                     "This phone is already enrolled as a device. Forget the enrolment first if you want " +
                         "to join a new invite.",
                 )
-            }
-            else -> {
-                // Unprovisioned / Loading / Joining / CompareSas / Removed / Error: park it and
-                // put the screen where the user can act (create the key, or retry).
-                _parkedInvite.value = invite
-                when (state) {
-                    is EnrolUiState.Joining, is EnrolUiState.CompareSas -> {
-                        val info = _deviceInfo.value
-                        if (info != null) joinPairing(invite, sameDevice = true) else _enrolState.value = EnrolUiState.Unprovisioned
-                    }
-                    is EnrolUiState.Error -> _enrolState.value =
-                        if (state.info == null) EnrolUiState.Unprovisioned else EnrolUiState.Ready(state.info).also { continueParkedInvite() }
-                    else -> Unit
-                }
             }
         }
     }
