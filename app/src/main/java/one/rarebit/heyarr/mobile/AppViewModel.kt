@@ -606,6 +606,8 @@ class AppViewModel internal constructor(
 
     /** The codes differ — abort; nothing was signed or received. */
     fun rejectSas() = pairing.rejectMatch()
+    /** Cruciform's return leg said it refused this phone's report: stop waiting, say why. */
+    fun pairingRefused(session: String, reason: String) = pairing.refuse(session, reason)
 
     /** Give up on the pairing in flight (the relay wait) and go back to the resting screen. */
     fun cancelPairing() = pairing.cancel()
