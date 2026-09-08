@@ -228,7 +228,10 @@ object Series {
     private val RE_SEASON_LABEL = Regex("""(?i)^(?:season|series|staffel|saison|s)\s*(\d{1,3})$""")
     private val RE_SEASON_DIR = Regex("""(?i)^(?:season|series|staffel|saison|stagione|temporada|seizoen|s)[ ._-]*(\d{1,3})(?:[^0-9].*)?$""")
     private val RE_SPECIALS_LABEL = Regex("""(?i)^specials?$""")
-    private val RE_BRACKETS = Regex("""\[[^\]]*]|\([^)]*\)|\{[^}]*}""")
+    // Closing `]` and `}` are escaped on purpose: the desktop JVM's regex accepts them
+    // bare, Android's (ICU-backed) throws PatternSyntaxException, which surfaced as an
+    // ExceptionInInitializerError on every Detail open that touched this object.
+    private val RE_BRACKETS = Regex("""\[[^\]]*\]|\([^)]*\)|\{[^}]*\}""")
     private val RE_SEPARATORS = Regex("""[._\s]+""")
     private val RE_RESOLUTION = Regex("""^\d{3,4}[pi]$|^[248]k$""")
     private val RE_YEAR = Regex("""^(19|20)\d{2}$""")
