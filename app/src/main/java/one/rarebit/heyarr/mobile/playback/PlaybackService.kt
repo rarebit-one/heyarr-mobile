@@ -1,6 +1,8 @@
 package one.rarebit.heyarr.mobile.playback
 
 import android.content.Intent
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -30,6 +32,17 @@ class PlaybackService : MediaSessionService() {
         val player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSources))
             .setHandleAudioBecomingNoisy(true)
+            // Declare MUSIC audio + take audio focus, standard for a media
+            // session (ducking/pausing for calls). This is correct hygiene the
+            // default UNKNOWN attributes skip; the video path declares MOVIE so
+            // the system does not treat it as music (issue #42).
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
             .build()
         session = MediaSession.Builder(this, player)
             .setBitmapLoader(DataSourceBitmapLoader(MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor()), dataSources))

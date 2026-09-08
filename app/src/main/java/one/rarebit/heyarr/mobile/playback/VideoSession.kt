@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -122,6 +123,19 @@ class VideoSession(
             .setTrackSelector(selector)
             .setMediaSourceFactory(DefaultMediaSourceFactory(HeyarrDataSource.factory(okHttp, t, liveAuthorization)))
             .setHandleAudioBecomingNoisy(true)
+            // Declare this as MOVIE audio (not the default UNKNOWN). Left
+            // undeclared, Nothing OS can't tell video playback from a music
+            // player and drives the Glyph LEDs' music-visualisation over it
+            // (issue #42); a video app like YouTube declares movie audio and is
+            // left alone. handleAudioFocus so a call or another app ducks/pauses
+            // us the way the audio queue already does.
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
             .build()
         p.addListener(listener)
         val item = MediaItem.Builder().setUri(t.contentUrl).setMediaId(t.contentUrl)
