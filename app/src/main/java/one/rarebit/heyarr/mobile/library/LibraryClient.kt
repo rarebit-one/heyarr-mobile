@@ -57,9 +57,12 @@ class LibraryClient(
         /** Pure URL builder — unit-tested. The bare route, no paging, for callers that want it. */
         fun worksUrl(baseUrl: String): String = baseUrl.trimEnd('/') + "/api/v1/works"
 
-        /** `GET /works?limit=200[&cursor=…]` — one page of the list. */
+        /** The browse embeds every list row is asked for (heyarr-core ADR-0075): the poster and the one playable file. */
+        private val INCLUDE = URLEncoder.encode("artwork,primary_asset", "UTF-8")
+
+        /** `GET /works?limit=200&include=artwork,primary_asset[&cursor=…]` — one page of the list. */
         fun worksUrl(baseUrl: String, cursor: String?): String {
-            val base = worksUrl(baseUrl) + "?limit=" + PAGE_LIMIT
+            val base = worksUrl(baseUrl) + "?limit=" + PAGE_LIMIT + "&include=" + INCLUDE
             return if (cursor.isNullOrBlank()) base else base + "&cursor=" + URLEncoder.encode(cursor, "UTF-8")
         }
 

@@ -8,7 +8,9 @@ package one.rarebit.heyarr.mobile.library
  * `Season 02` / `Specials`), and `GET /works/{id}/assets` (#429) inlines that label on
  * every file. The episode number and title are not on the wire — they live in the
  * filename the scanner matched (`S04E01`, `2x05`, `Episode 5 - Title`), so this reads
- * them back the same way the node did. Pure and JVM-tested (#43).
+ * them back the same way the node did. Pure and JVM-tested (#43); the sidecar pairing
+ * (thumbnails, subtitles), season gaps and quality tags came back from the desktop's
+ * port so both clients read a scan the same way.
  */
 data class Episode(
     val asset: WorkAsset,
@@ -18,6 +20,10 @@ data class Episode(
     val number: Int?,
     /** The cleaned remainder of the filename after the episode marker, null when empty. */
     val title: String?,
+    /** The `-thumb.jpg` sidecar the scan recorded for this file, when there is one. */
+    val thumbnail: WorkAsset? = null,
+    /** Subtitle sidecars that share this episode's stem. */
+    val subtitles: List<WorkAsset> = emptyList(),
 ) {
     /**
      * `S04E01` when both numbers are known, `E05` with only the number; null with no
@@ -35,22 +41,35 @@ data class Episode(
         get() = listOfNotNull(code, title).joinToString(" ").ifBlank { asset.filename ?: asset.id }
 
     val isPlayable: Boolean get() = asset.isPlayable
+
+    /** The thumbnail's relative content path, for the artwork URL builder. */
+    val thumbnailPath: String? get() = thumbnail?.blobHash?.let { "/api/v1/blobs/$it/content" }
 }
 
 /** One season of a series, its episodes in order. [number] is `0` for specials, null when unknown. */
 data class Season(val number: Int?, val episodes: List<Episode>) {
     val label: String get() = Series.seasonLabel(number)
+
+    /** Episode numbers between 1 and the highest held that no file covers — what "missing" means without a provider. */
+    val gaps: List<Int>
+        get() {
+            val nums = episodes.mapNotNull { it.number }.toSet()
+            val max = nums.maxOrNull() ?: return emptyList()
+            return (1..max).filter { it !in nums }
+        }
+
+    val held: Int get() = episodes.count { it.isPlayable }
 }
 
 object Series {
 
     /** The server content types (and client kinds) that mean an episodic work. */
-    private val KINDS = setOf("series", "show", "tv", "television", "tvshow", "tv_show", "episode", "season")
+    private val KINDS = setOf("series", "show", "tv", "television", "tvshow", "tv_show", "tv_series", "episode", "season")
 
     /** True for a work whose files are episodes rather than one film. */
     fun isSeries(kind: String?): Boolean = kind?.lowercase()?.trim() in KINDS
 
-    /** `Season 04` / `Specials` / `Episodes` for a season number. */
+    /** `Season 4` / `Specials` / `Episodes` for a season number. */
     fun seasonLabel(number: Int?): String = when {
         number == null -> "Episodes"
         number == 0 -> "Specials"
@@ -58,14 +77,21 @@ object Series {
     }
 
     /**
-     * A series' files as seasons, each with its episodes in order. Only episode files
-     * take part: a poster, a `.nfo`, a subtitle or a thumbnail the scan recorded as its
-     * own asset is a sidecar, not something to play. Numbered seasons come first in
-     * order, then Specials, then whatever named no season at all; within a season the
+     * A series' files as seasons, each with its episodes in order, each episode paired
+     * with the thumbnail and subtitle sidecars that share its filename stem. Only
+     * episode files take part as rows; sidecars attach to them. Numbered seasons come
+     * first in order, then Specials, then whatever named no season; within a season the
      * episodes order by number, the unnumbered last, ties by filename.
      */
     fun seasons(assets: List<WorkAsset>): List<Season> {
-        val episodes = assets.mapNotNull { episode(it) }
+        val thumbs = assets.filter { isThumbnail(it) }.associateBy { stemKey(it, stripThumb = true) }
+        val subs = assets.filter { isSubtitle(it) }.groupBy { stemKey(it, stripThumb = false, stripLang = true) }
+        val episodes = assets.mapNotNull { a ->
+            episode(a)?.let { e ->
+                val key = stemKey(a, stripThumb = false)
+                e.copy(thumbnail = thumbs[key], subtitles = subs[key].orEmpty())
+            }
+        }
         if (episodes.isEmpty()) return emptyList()
         return episodes.groupBy { it.season }
             .map { (season, eps) ->
@@ -114,24 +140,38 @@ object Series {
         return null
     }
 
+    /** True for a `…-thumb.jpg` / `.png` artwork sidecar. */
+    fun isThumbnail(asset: WorkAsset): Boolean {
+        val name = (asset.filename ?: "").lowercase()
+        return (asset.role == "artwork" || name.endsWith("-thumb.jpg") || name.endsWith("-thumb.png")) && name.contains("-thumb.")
+    }
+
+    /** True for a subtitle sidecar (`.srt`, `.vtt`, `.ass`, `.sub`, `.sup`). */
+    fun isSubtitle(asset: WorkAsset): Boolean {
+        val role = asset.role?.lowercase()
+        if (role == "subtitle" || role == "subtitles") return true
+        val ext = (asset.filename ?: "").substringAfterLast('.', "").lowercase()
+        return ext in SUBTITLE_EXTENSIONS
+    }
+
+    /** The normalised stem two sidecars share: lowercase, `-thumb` and a trailing language tag stripped. */
+    internal fun stemKey(asset: WorkAsset, stripThumb: Boolean, stripLang: Boolean = false): String {
+        var stem = (asset.filename ?: asset.sourcePath?.substringAfterLast('/') ?: asset.id).substringBeforeLast('.').lowercase()
+        if (stripThumb) stem = stem.removeSuffix("-thumb")
+        if (stripLang) stem = stem.replace(RE_LANG_SUFFIX, "")
+        return stem
+    }
+
     // ── Internals ────────────────────────────────────────────────────────────────
 
     private class Marker(val season: Int?, val number: Int, val end: Int)
 
     /** The episode marker in a filename stem: `S04E01` (also `S04E01E02`), `4x01`, `Episode 5`, `E05`, or a leading `05 -`. */
     private fun markerIn(stem: String): Marker? {
-        RE_SXXEXX.find(stem)?.let { m ->
-            return Marker(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.range.last + 1)
-        }
-        RE_NXNN.find(stem)?.let { m ->
-            return Marker(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.range.last + 1)
-        }
-        RE_EPISODE_WORD.find(stem)?.let { m ->
-            return Marker(null, m.groupValues[1].toInt(), m.range.last + 1)
-        }
-        RE_LEADING_NUMBER.find(stem)?.let { m ->
-            return Marker(null, m.groupValues[1].toInt(), m.range.last + 1)
-        }
+        RE_SXXEXX.find(stem)?.let { m -> return Marker(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.range.last + 1) }
+        RE_NXNN.find(stem)?.let { m -> return Marker(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.range.last + 1) }
+        RE_EPISODE_WORD.find(stem)?.let { m -> return Marker(null, m.groupValues[1].toInt(), m.range.last + 1) }
+        RE_LEADING_NUMBER.find(stem)?.let { m -> return Marker(null, m.groupValues[1].toInt(), m.range.last + 1) }
         return null
     }
 
@@ -150,6 +190,13 @@ object Series {
             kept.add(tok)
         }
         return kept.joinToString(" ").trim().trimEnd('-', '–').trim().ifBlank { null }
+    }
+
+    /** The quality tags a scene name carries after the title (`1080p · WEB-DL · x265`), for a small chip row. */
+    fun qualityTags(asset: WorkAsset): List<String> {
+        val stem = (asset.filename ?: "").substringBeforeLast('.')
+        val cleaned = stem.replace(RE_BRACKETS) { " " + it.value.trim('[', ']', '(', ')', '{', '}') + " " }.replace(RE_SEPARATORS, " ")
+        return cleaned.split(' ').filter { it.isNotBlank() }.filter { isNoise(it) && !RE_YEAR.matches(it.lowercase()) }.map { it.uppercase() }.distinct().take(4)
     }
 
     private fun isNoise(token: String): Boolean {
@@ -172,11 +219,7 @@ object Series {
         return true
     }
 
-    private fun seasonRank(number: Int?): Int = when {
-        number == null -> 2
-        number == 0 -> 1
-        else -> 0
-    }
+    private fun seasonRank(number: Int?): Int = when { number == null -> 2; number == 0 -> 1; else -> 0 }
 
     private val RE_SXXEXX = Regex("""(?i)(?<![a-z0-9])S(\d{1,3})[ ._-]?E(\d{1,3})(?:[ ._-]?E\d{1,3})*""")
     private val RE_NXNN = Regex("""(?i)(?<![a-z0-9])(\d{1,2})x(\d{2,3})(?![a-z0-9])""")
@@ -190,14 +233,17 @@ object Series {
     private val RE_RESOLUTION = Regex("""^\d{3,4}[pi]$|^[248]k$""")
     private val RE_YEAR = Regex("""^(19|20)\d{2}$""")
     private val RE_CODEC = Regex("""^(x|h)\.?26[45]$|^hevc$|^avc$|^av1$|^xvid$|^divx$|^vp9$|^(aac|ac3|eac3|dts|ddp?|truehd|flac|opus)(\d.*)?$""")
+    private val RE_LANG_SUFFIX = Regex("""\.(en|eng|es|spa|fr|fre|fra|de|ger|deu|it|ita|pt|por|ja|jpn|zh|chi|nl|dut|sv|swe|forced|sdh)(\.(forced|sdh))?$""")
 
     private val NOISE = setOf(
         "web", "web-dl", "webdl", "webrip", "web-rip", "bluray", "blu-ray", "bdrip", "brrip", "bdremux", "remux",
         "hdtv", "pdtv", "dvdrip", "dvd", "hdr", "hdr10", "hdr10+", "dv", "dovi", "sdr", "uhd",
         "proper", "repack", "rerip", "internal", "limited", "extended", "uncut", "remastered", "multi", "dual",
         "subbed", "dubbed", "hc", "ws", "atmos", "amzn", "nf", "dsnp", "hmax", "pcok", "atvp", "hulu", "itunes",
-        "10bit", "8bit", "hi10p", "hi10", "sample",
+        "10bit", "8bit", "hi10p", "hi10", "sample", "hdtv-1080p", "hdtv-720p", "web-1080p", "webdl-1080p",
     )
+
+    private val SUBTITLE_EXTENSIONS = setOf("srt", "sub", "idx", "ass", "ssa", "vtt", "sup")
 
     private val SIDECAR_EXTENSIONS = setOf(
         "nfo", "jpg", "jpeg", "png", "webp", "gif", "bmp", "tbn", "srt", "sub", "idx", "ass", "ssa", "vtt", "sup",

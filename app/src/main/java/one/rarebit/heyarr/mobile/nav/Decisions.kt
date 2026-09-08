@@ -1,33 +1,21 @@
 package one.rarebit.heyarr.mobile.nav
 
+import one.rarebit.heyarr.mobile.catalog.Artwork
 import one.rarebit.heyarr.mobile.library.Work
+import one.rarebit.heyarr.mobile.library.WorkAsset
+import one.rarebit.heyarr.mobile.music.trackTitle
 import one.rarebit.heyarr.mobile.playback.AudioItem
 import one.rarebit.heyarr.mobile.playback.NowPlaying
 import one.rarebit.heyarr.mobile.playback.PlaybackClient
-import one.rarebit.heyarr.mobile.library.Series
-import one.rarebit.heyarr.mobile.library.WorkAsset
-import one.rarebit.heyarr.mobile.catalog.Artwork
-import one.rarebit.heyarr.mobile.music.trackTitle
+import one.rarebit.heyarr.mobile.ui.components.NavSection
 
 /**
- * The navigation host's decisions, as pure functions — so what a tap means, what the
- * player route shows, and when the mini-player appears are unit-tested rather than
- * discovered on a device. The host only wires them.
+ * The navigation host's decisions, as pure functions — so what the player route shows,
+ * when the now-playing bar appears, which nav tile a route lights and how an album
+ * becomes a queue are unit-tested rather than discovered on a device. The host only
+ * wires them.
  */
 object Decisions {
-
-    /**
-     * What tapping a card does, per hub: a film plays, an album opens its tracks, a book
-     * opens the reader entry — and a series opens its seasons and episodes (#43): a tap
-     * on a show never means "play whichever file the node listed first".
-     */
-    enum class Tap { PLAY, OPEN_ALBUM, OPEN_READER, OPEN_SERIES }
-
-    fun tapFor(work: Work): Tap = when (Route.hubFor(work.kind)) {
-        Route.HUB_MUSIC -> Tap.OPEN_ALBUM
-        Route.HUB_BOOKS -> Tap.OPEN_READER
-        else -> if (Series.isSeries(work.kind)) Tap.OPEN_SERIES else Tap.PLAY
-    }
 
     /** What the full-screen player route renders: video pre-empts the audio queue; nothing means leave. */
     enum class PlayerContent { VIDEO, AUDIO, NONE }
@@ -38,8 +26,38 @@ object Decisions {
         else -> PlayerContent.NONE
     }
 
-    /** The mini-player strip shows only when audio is queued and the screen is not already the player. */
-    fun showMiniPlayer(fullScreen: Boolean, audioItem: AudioItem?): Boolean = !fullScreen && audioItem != null
+    /** The persistent bar shows while either player has something and the screen is not already the player. */
+    fun showNowPlayingBar(fullScreen: Boolean, videoActive: Boolean, audioItem: AudioItem?): Boolean = !fullScreen && (videoActive || audioItem != null)
+
+    /** The nav tile a route lights: a detail lights the section it was opened from. */
+    fun section(route: Route?): NavSection? = when (route) {
+        Route.Home -> NavSection.HOME
+        Route.Discover -> NavSection.DISCOVER
+        Route.Search -> NavSection.SEARCH
+        Route.Library, Route.Playlists, is Route.Playlist -> NavSection.LIBRARY
+        Route.Missing -> NavSection.MISSING
+        Route.Cast -> NavSection.CAST
+        Route.Settings, Route.Telemetry, Route.Device -> NavSection.SETTINGS
+        is Route.Detail -> when (route.from) {
+            "Home" -> NavSection.HOME
+            "Discover" -> NavSection.DISCOVER
+            "Search" -> NavSection.SEARCH
+            "Missing" -> NavSection.MISSING
+            else -> NavSection.LIBRARY
+        }
+        Route.Player, null -> null
+    }
+
+    /** The route a nav tile goes to. */
+    fun routeOf(section: NavSection): Route = when (section) {
+        NavSection.HOME -> Route.Home
+        NavSection.DISCOVER -> Route.Discover
+        NavSection.SEARCH -> Route.Search
+        NavSection.LIBRARY -> Route.Library
+        NavSection.MISSING -> Route.Missing
+        NavSection.CAST -> Route.Cast
+        NavSection.SETTINGS -> Route.Settings
+    }
 
     /**
      * An album's tracks as queue items: the blob route per track, the album's cover as
@@ -51,7 +69,7 @@ object Decisions {
         val playable = tracks.filter { !it.blobHash.isNullOrBlank() }
         val items = playable.map { t ->
             AudioItem(
-                assetId = t.id, workId = work.id, title = trackTitle(t), artist = work.artist, album = work.title,
+                assetId = t.id, workId = work.id, title = trackTitle(t), artist = work.artist ?: work.author, album = work.title,
                 artworkUrl = Artwork.posterUrl(baseUrl, work),
                 contentUrl = PlaybackClient.blobContentUrl(baseUrl, t.blobHash!!), mime = t.mime,
             )

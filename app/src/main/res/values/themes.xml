@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- A Compose app only needs a no-action-bar Material base theme. -->
-    <style name="Theme.Heyarr" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- A Compose app only needs a no-action-bar base theme; dark, with the design
+         system's base surface as the window background so the first frame does not flash white. -->
+    <style name="Theme.Heyarr" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF080709</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>

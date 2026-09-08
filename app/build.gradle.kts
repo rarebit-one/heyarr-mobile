@@ -15,7 +15,7 @@ plugins {
 val releaseVersionName: String =
     providers.gradleProperty("releaseVersionName").orNull
         ?.trim()?.removePrefix("v")?.takeIf { it.isNotEmpty() }
-        ?: "0.3.1"
+        ?: "0.5.0"
 
 fun versionCodeOf(name: String): Int {
     val parts = name.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
@@ -117,6 +117,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    // The design system's glyphs (media kinds, transport, nav) — the extended set; the
+    // core set lacks Tv / MenuBook / Podcasts / Cast / Replay10 and friends.
+    implementation("androidx.compose.material:material-icons-extended")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("androidx.core:core-ktx:1.13.1")

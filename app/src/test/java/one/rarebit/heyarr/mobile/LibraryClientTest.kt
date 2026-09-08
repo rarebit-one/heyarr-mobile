@@ -31,7 +31,7 @@ class LibraryClientTest {
         val client = LibraryClient(t, "https://h.example", Credential.Session("tok-123"))
         val works = client.listWorks()
         // The list is paged at the server max (a homelab library fits one page).
-        assertEquals("https://h.example/api/v1/works?limit=200", t.lastUrl)
+        assertEquals("https://h.example/api/v1/works?limit=200&include=artwork%2Cprimary_asset", t.lastUrl)
         assertEquals("Bearer tok-123", t.lastAuth)
         assertEquals(1, works.size)
         assertEquals("Dune", works[0].title)

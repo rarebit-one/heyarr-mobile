@@ -44,6 +44,12 @@ data class Work(
      * the list read, which does not carry them.
      */
     val externalIds: Map<String, String> = emptyMap(),
+    /**
+     * The work's string attributes as the identifier wrote them (an overview /
+     * synopsis when a provider filled one, a genre, a runtime…). Read from the same
+     * `attributes` object [artist] / [author] come from; empty on most nodes today.
+     */
+    val attributes: Map<String, String> = emptyMap(),
     /** RFC 3339 server timestamps, as sent; parsed only for ordering/display. */
     val createdAt: String? = null,
     val updatedAt: String? = null,
@@ -53,4 +59,7 @@ data class Work(
 
     /** The timestamp "recent first" orders on: last touched, else created. */
     val recency: String? get() = updatedAt ?: createdAt
+
+    /** The node's own synopsis, when a provider wrote one under any of the usual keys. */
+    val synopsis: String? get() = listOf("overview", "synopsis", "description", "summary").firstNotNullOfOrNull { k -> attributes[k]?.takeIf { it.isNotBlank() } }
 }

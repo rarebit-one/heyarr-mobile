@@ -5,7 +5,29 @@ the self-hosted media platform. Voidbind **QR** sign-in, a native **library brow
 seams for **device-side personal state** (decrypt-on-device) that make this the *product*
 client rather than a generic Subsonic app.
 
-This is a **scaffold** — a buildable, tested foundation, not a finished app.
+It wears the **Heyarr Desktop design language** — the same tokens, media-keyed accents,
+self-hosted Inter / Montserrat / Rubik faces and components as
+[`rarebit-one/heyarr-desktop`](https://github.com/rarebit-one/heyarr-desktop) — on a
+phone's bottom bar (a rail on a tablet), consumption first with curation one tab away.
+
+## Screens
+
+| Screen | heyarr surface |
+|--------|----------------|
+| **Home / Discover** — media-mixed spotlight hero, Continue (the node's own unfinished sessions, labelled as such), Starred / Recently played (this phone's decrypted state, labelled as such), per-type rails, Wanted-but-missing, Could-be-better, Following | `GET /works`, `search_content` per type, `GET /consumption/continue`, `get_missing_content`, `get_upgrade_candidates`, `list_followed`; Discover quotes `discover_content`'s refusal when the node has no provider |
+| **Search** — one box, every kind at once, sections stream in as each answer lands, type chips, recent searches kept locally and labelled so | `search_content` × {movie, series, music, book} + an untyped call for episodes, in parallel; followed sources matched client-side |
+| **Detail** — **Watch**: art, synopsis (the node's, else a keyless public source labelled "via …", else an honest line), seasons + episodes parsed from files with `-thumb.jpg` sidecars, not-held rows with "Look for it", tracks, book files, feed archive. **Curate**: status, held files with verdicts, indexer candidates + Acquire, score a release, health/replicas, captions & artwork, "also catalogued as" | `GET /works/{id}`, `GET /works/{id}/assets`, `get_content_satisfaction`, `GET /desired/{id}/candidates`, `explain_release`, `search_releases`, `acquire_release`, `get_replica_status`, `verify_blob`, `get_external_ids`, `play_here`, `monitor_content`, `want_content`, `POST /desired` (scope=edition) |
+| **Player** — in-app ExoPlayer with a persistent now-playing bar across screens (play/pause, ±10 s, seek, title), fullscreen, captions as a menu with language names, cast to a renderer | `/api/v1/blobs/{hash}/content` (Range/206), `POST /playback/plan`, `play_here` |
+| **Library** — grid/list, type + status filters, plus **Downloads** (wants in flight: state/phase/detail, and the job queue — the node reports state, not a percentage) and this phone's **Playlists** | `GET /works` + the want index; `GET /desired`, `GET /jobs` |
+| **Missing** — bulk search-now / monitor on-off, Want by title; Want a season lives on the series | `get_missing_content`, `get_upgrade_candidates`, `search_releases`, `monitor_content`, `want_content` |
+| **Cast** — renderers, live status, transport | `list_renderers`, `playback_status` (polled), `control_playback` |
+| **Settings** — connection + telemetry (`/session`, `/providers`, `/capabilities`, peers, libraries, jobs), device enrolment, followed sources, peers, appearance (adaptive accents, reduce motion, public cover art) | `list_followed`, `follow_source`, `unfollow`, `get_peer_status`, `sync_peer`, `GET /quality-profiles` |
+
+**Library status** (In library · Wanted · Missing · Not tracked) derives only from real
+want state (`GET /desired`). **Want** is optimistic: the card flips at once and rolls back
+with the tool's refusal on failure. Rule codes and refusal text are quoted verbatim and the
+tool is named. The MCP surface cannot see personal state; the only personal rows are the
+ones this phone decrypts itself (`personalstate/`), and they say so.
 
 ## What's here
 
@@ -51,10 +73,33 @@ every Device request as `Voidbind-Membership` (`device/MembershipOps` picks ≤ 
 `POST /enrol {…, ops}`, and after a 401 the app re-reads `GET /membership/{usr}` so a
 device another member removed shows an honest "removed" state instead of looping.
 
+## Design system
+
+Tokens live in one place — `theme/Tokens.kt` (surfaces, text ramp, radii, spacing,
+type scale) — and the media table in `theme/MediaType.kt`:
+
+| Media | Accent | Card | CTA |
+|-------|--------|------|-----|
+| Movie | `#00935E` emerald (app default) | 2:3 | Play |
+| Series | `#7C5CFF` violet | 2:3 | Play / Next episode |
+| Book | `#E0A458` amber, spine shadow | 2:3 | Read |
+| Audiobook | `#2DB3A6` teal | 1:1 | Listen |
+| Podcast | `#C13BAD` magenta | 1:1 | Play episode |
+| Music | `#FF4D6D` rose | 1:1 | Play |
+| Feed / document / unknown | `#7A8598` slate | — | Open |
+
+The accent swaps the CTA gradient, pressed/focus states, the active nav tile, progress
+bars and the section underline; surfaces and text stay constant. Wrap any subtree in
+`MediaScope(type) { … }` to re-skin it. Fonts are self-hosted (OFL): **Inter** for UI
+and body, **Montserrat** for display headings, **Rubik** for the technical voice —
+`app/src/main/res/font`, licences in `app/src/main/assets/fonts`. `MediaThemeTest` pins
+the table and AA contrast; `preview/Fixtures.kt` carries the live-node shapes the JVM
+tests and previews share with the desktop.
+
 ## Build / test
 
 ```sh
-./gradlew testDebugUnitTest      # pure-JVM unit tests (login state machine, works parse, URLs, credential)
+./gradlew testDebugUnitTest      # pure-JVM unit tests (readers, grouping, status, series, theme, routes, credential)
 ./gradlew assembleDebug          # debug APK
 ```
 
