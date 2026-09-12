@@ -63,6 +63,7 @@ class VideoSession(
         val paused: Boolean = true,
         val positionMs: Long = 0,
         val durationMs: Long = 0,
+        val bufferedMs: Long = 0,
         val buffering: Boolean = false,
         val ended: Boolean = false,
         val textTracks: List<TextTrack> = emptyList(),
@@ -73,6 +74,14 @@ class VideoSession(
         val renderedFrame: Boolean = false,
     ) {
         val fraction: Float get() = if (durationMs > 0) (positionMs.toDouble() / durationMs).coerceIn(0.0, 1.0).toFloat() else 0f
+
+        /**
+         * How far ahead the stream has cached, as a fraction of the runtime — the
+         * lighter band behind the scrubber's played portion (mirrors heyarr-desktop's
+         * `PlayerState.bufferedFraction`, which reads mpv's `demuxer-cache-time`).
+         * Relative to the same [durationMs] basis as [fraction], so the two line up.
+         */
+        val bufferedFraction: Float get() = if (durationMs > 0) (bufferedMs.toDouble() / durationMs).coerceIn(0.0, 1.0).toFloat() else 0f
     }
 
     var current: NowPlaying? by mutableStateOf(null)
@@ -229,7 +238,7 @@ class VideoSession(
             var lastReport = 0L
             while (isActive) {
                 player?.let { p ->
-                    state = state.copy(positionMs = p.currentPosition.coerceAtLeast(0), durationMs = p.duration.coerceAtLeast(0))
+                    state = state.copy(positionMs = p.currentPosition.coerceAtLeast(0), durationMs = p.duration.coerceAtLeast(0), bufferedMs = p.bufferedPosition.coerceAtLeast(0))
                     val now = System.currentTimeMillis()
                     if (p.isPlaying && now - lastReport >= PROGRESS_TICK_MS) { lastReport = now; onProgress(PlaybackProgress(sourceSeconds(), false, PlaybackProgress.Event.TICK)) }
                 }

@@ -2,6 +2,7 @@ package one.rarebit.heyarr.mobile.ui.screens
 
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,7 +54,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -202,11 +205,27 @@ private fun Transport(video: VideoSession, ps: VideoSession.State, target: Playb
     val theme = LocalMediaTheme.current
     var dragging by remember { mutableStateOf<Float?>(null) }
     val seekable = ps.durationMs > 0 && (target.seekable || target.restartSeekable)
-    Slider(
-        value = dragging ?: ps.fraction, onValueChange = { dragging = it }, onValueChangeFinished = { dragging?.let { video.seekFraction(it) }; dragging = null },
-        modifier = Modifier.fillMaxWidth().height(24.dp).semantics { contentDescription = "Position ${clockShort(ps.positionMs)} of ${clockShort(ps.durationMs)}" },
-        colors = SliderDefaults.colors(thumbColor = theme.accentGradientEnd, activeTrackColor = theme.accent, inactiveTrackColor = Tokens.surface3), enabled = seekable,
-    )
+    val buffered = ps.bufferedFraction
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        // Behind the Slider: the inactive rail, and over it a lighter band as far as
+        // the stream has cached ahead (mirrors heyarr-desktop's SeekBar). Inset by the
+        // thumb radius so it lines up with the track the Slider paints the played
+        // portion onto; the Slider's own inactive track is transparent so this shows
+        // through, but it still owns the active track and the thumb, so dragging stays
+        // pixel-accurate.
+        Canvas(Modifier.fillMaxWidth().padding(horizontal = 10.dp).height(4.dp)) {
+            val y = size.height / 2f
+            drawLine(Tokens.surface3, Offset(0f, y), Offset(size.width, y), strokeWidth = size.height, cap = StrokeCap.Round)
+            if (buffered > 0f) {
+                drawLine(theme.accent.copy(alpha = 0.35f), Offset(0f, y), Offset(size.width * buffered, y), strokeWidth = size.height, cap = StrokeCap.Round)
+            }
+        }
+        Slider(
+            value = dragging ?: ps.fraction, onValueChange = { dragging = it }, onValueChangeFinished = { dragging?.let { video.seekFraction(it) }; dragging = null },
+            modifier = Modifier.fillMaxWidth().height(24.dp).semantics { contentDescription = "Position ${clockShort(ps.positionMs)} of ${clockShort(ps.durationMs)}, buffered ${(buffered * 100).toInt()} percent" },
+            colors = SliderDefaults.colors(thumbColor = theme.accentGradientEnd, activeTrackColor = theme.accent, inactiveTrackColor = Color.Transparent), enabled = seekable,
+        )
+    }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         IconButtonRound(Icons.Rounded.Replay10, "Back 10 seconds", { video.seekBy(-10.0) }, size = 40.dp, enabled = seekable)
         IconButtonRound(if (ps.paused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, if (ps.paused) "Play" else "Pause", { video.togglePause() }, size = 52.dp, filled = true)
