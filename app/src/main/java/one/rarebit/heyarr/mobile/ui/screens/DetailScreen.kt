@@ -68,6 +68,7 @@ import one.rarebit.heyarr.mobile.heyarr.Candidate
 import one.rarebit.heyarr.mobile.heyarr.DesiredItem
 import one.rarebit.heyarr.mobile.heyarr.HeyarrApi
 import one.rarebit.heyarr.mobile.heyarr.McpResult
+import one.rarebit.heyarr.mobile.heyarr.seriesWantState
 import one.rarebit.heyarr.mobile.library.Episode
 import one.rarebit.heyarr.mobile.library.Season
 import one.rarebit.heyarr.mobile.library.Series
@@ -464,9 +465,12 @@ private fun SeasonsBlock(session: AppSession, work: Work, seasons: List<Season>,
 }
 
 /**
- * Wanting more of a series, with the three scopes the node really has: one season
- * (an edition-scope want — heyarr's edition of an episodic work IS its season), the
- * whole series (a work-scope want), or a standing follow through TVDB.
+ * Wanting more of a series. One season is a genuine one-off (an edition-scope want —
+ * heyarr's edition of an episodic work IS its season). Wanting the *whole* series is not
+ * a one-off: per ADR-0089 a work-scoped want on a series establishes a standing follow
+ * whose poll enumerates every episode, so we present it as following, and read the
+ * "already following" signal the same way heyarr-desktop does — from the item-scoped
+ * wants the follow projects ([seriesWantState]).
  */
 @Composable
 private fun WantSeasonsPanel(session: AppSession, work: Work, seasons: List<Season>, wants: List<DesiredItem>, state: DetailState) {
@@ -474,7 +478,7 @@ private fun WantSeasonsPanel(session: AppSession, work: Work, seasons: List<Seas
     val profiles = session.profiles
     var profile by remember(profiles) { mutableStateOf(profiles.firstOrNull { it.name == session.defaultProfile }?.name ?: profiles.firstOrNull()?.name ?: session.defaultProfile) }
     val tvdb = state.externalIds.firstOrNull { it.source.equals("tvdb", true) }?.value ?: work.externalIds["tvdb"]
-    val wholeSeries = wants.any { it.scope == "work" }
+    val followState = seriesWantState(wants)
     Panel("Want more of ${work.title}") {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Profile", style = MaterialTheme.typography.labelSmall, color = Tokens.textMuted)
@@ -503,16 +507,32 @@ private fun WantSeasonsPanel(session: AppSession, work: Work, seasons: List<Seas
             }
         }
         Text("Seasons the library has never seen have nothing to point a want at yet — they arrive through a follow.", style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted)
-        Text("Everything", style = MaterialTheme.typography.titleSmall, color = Tokens.textPrimary)
+        Text("The whole series", style = MaterialTheme.typography.titleSmall, color = Tokens.textPrimary)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SecondaryButton(if (wholeSeries) "Whole series · wanted" else "Want the whole series", {
-                scope.launch { session.io { session.api.wantWork(work.id, profile) }.onSuccess { r -> when (r) { is McpResult.Ok -> { session.toast(Toast.Kind.SUCCESS, "Wanted the whole series"); session.refreshIndex() }; is McpResult.Refused -> session.refused(r) } } }
-            }, icon = Icons.Rounded.Add, compact = true, enabled = !wholeSeries && profile.isNotBlank())
-            if (tvdb != null) SecondaryButton("Follow on TVDB (full back-catalogue)", {
-                scope.launch { session.io { session.api.follow(null, tvdb, null, profile, backfill = "full", reason = "followed from the phone") }.onSuccess { r -> when (r) { is McpResult.Ok -> session.toast(Toast.Kind.SUCCESS, "Following ${work.title}", "Every episode, past and future, becomes a want."); is McpResult.Refused -> session.refused(r) } } }
+            // ADR-0089: wanting the whole series IS following it — the node resolves the
+            // series and its poll enumerates every episode as a want. One door.
+            SecondaryButton(if (followState.everythingCovered) "Following · every episode" else "Follow the whole series", {
+                scope.launch {
+                    session.io { session.api.wantWork(work.id, profile) }.onSuccess { r ->
+                        when (r) {
+                            is McpResult.Ok -> { session.toast(Toast.Kind.SUCCESS, "Following ${work.title}", "Every episode, past and future, becomes a want. If this node can't identify the series yet, it stays a plain want until it can."); session.refreshIndex() }
+                            is McpResult.Refused -> session.refused(r)
+                        }
+                    }
+                }
+            }, icon = Icons.Rounded.Add, compact = true, enabled = !followState.everythingCovered && profile.isNotBlank())
+            // The explicit TVDB-id path is a fallback for a node whose metadata provider
+            // can't resolve the series by title; only offered when we know the id and
+            // aren't following yet.
+            if (tvdb != null && !followState.everythingCovered) SecondaryButton("Follow by TVDB id", {
+                scope.launch { session.io { session.api.follow(null, tvdb, null, profile, backfill = "full", reason = "followed from the phone") }.onSuccess { r -> when (r) { is McpResult.Ok -> { session.toast(Toast.Kind.SUCCESS, "Following ${work.title}", "Every episode, past and future, becomes a want."); session.refreshIndex() }; is McpResult.Refused -> session.refused(r) } } }
             }, icon = Icons.Rounded.Search, compact = true, enabled = profile.isNotBlank())
         }
-        if (tvdb == null) Text("No TVDB id is recorded for this work, so a follow needs the TVDB URL — Settings → Followed sources.", style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted)
+        if (!followState.everythingCovered) Text(
+            if (tvdb == null) "Following the whole series lets the node find it by name. If it can't, add the TVDB URL in Settings → Followed sources."
+            else "Following the whole series resolves it by name; the TVDB-id button is the exact-match fallback.",
+            style = MaterialTheme.typography.bodySmall, color = Tokens.textMuted,
+        )
     }
 }
 
