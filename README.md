@@ -1,5 +1,12 @@
 # heyarr-mobile
 
+> [!WARNING]
+> **Superseded by [`rarebit-one/heyarr-kmp`](https://github.com/rarebit-one/heyarr-kmp) (`:androidApp`) — this repo is frozen / archived-pending.**
+> heyarr-kmp#19 (2026-09-14) imported this repo's full history as the `:androidApp` module;
+> all mobile changes land there now. Do not open PRs here. The `v*`-tag release workflow is
+> disabled (both apps use applicationId `one.rarebit.heyarr.mobile`, so two release pipelines
+> would publish conflicting APKs) — releases are cut from heyarr-kmp.
+
 The first-party **Android client for [heyarr](https://github.com/rarebit-one/heyarr-core)** —
 the self-hosted media platform. Voidbind **QR** sign-in, a native **library browse**, and the
 seams for **device-side personal state** (decrypt-on-device) that make this the *product*
@@ -139,6 +146,10 @@ a **signed release APK** and attached to a GitHub Release, which is the artefact
 phone installs.
 
 ### Cutting a release
+
+> **Disabled.** This repo is superseded by heyarr-kmp; cut releases there. The tag trigger
+> below has been removed from `release.yml` (it is `workflow_dispatch`-only now) so a `v*`
+> tag here no longer publishes an APK. The steps are kept for history.
 
 ```sh
 git tag v0.2.1          # `v<major>.<minor>.<patch>`

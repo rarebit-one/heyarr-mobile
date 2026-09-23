@@ -1,5 +1,12 @@
 # CLAUDE.md — heyarr-mobile
 
+> **SUPERSEDED — this repo is frozen / archived-pending.** The Android app now lives in
+> [`rarebit-one/heyarr-kmp`](https://github.com/rarebit-one/heyarr-kmp) as `:androidApp`
+> (full history imported by heyarr-kmp#19, 2026-09-14). Make every mobile change there, not
+> here: do not open feature PRs, cut `v*` tags or re-enable `release.yml` in this repo (both
+> repos ship applicationId `one.rarebit.heyarr.mobile`; two release pipelines would publish
+> conflicting APKs). The rest of this file is kept as history.
+
 Guidance for Claude Code working in **heyarr-mobile** (part of the `rarebit-one` org).
 Read the workspace `~/Workspace/rarebit-one/CLAUDE.md` too — its Critical Rules
 (worktree-only, signed commits, autonomous-merge on green CI, issue hygiene) apply here.
