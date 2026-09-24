@@ -8,10 +8,12 @@ name: release
 #
 # The debug CI (android.yml) is unchanged and remains the merge gate.
 
+# DISABLED — this repo is superseded by rarebit-one/heyarr-kmp (:androidApp, imported in
+# heyarr-kmp#19). Both apps ship applicationId `one.rarebit.heyarr.mobile` and both release
+# workflows used to fire on `v*` tags, so a tag here could publish an APK that conflicts
+# with (or downgrades) the one heyarr-kmp ships. The tag trigger is removed; releases are
+# cut from heyarr-kmp. Manual dispatch is kept only to rebuild a historical tag by hand.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       tag:
