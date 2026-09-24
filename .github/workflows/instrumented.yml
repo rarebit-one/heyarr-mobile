@@ -40,8 +40,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+      # Use the runner's preinstalled Android SDK and accept licenses deterministically.
+      # (android-actions/setup-android re-downloads a newer cmdline-tools whose license
+      # re-accept fails non-interactively — "6 of 7 licenses not accepted".)
+      # Same fix as rarebit-one/heyarr-kmp.
+      - name: Accept Android SDK licenses
+        run: yes | "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
